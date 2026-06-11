@@ -55,6 +55,7 @@ static NSString *const kPointCloudKey = @"pointCloud";
     std::shared_ptr<VROTexture> _pointCloudSurfaceTexture;
     std::shared_ptr<VROSurface> _pointCloudParticleSurface;
     std::set<VROAnchorDetection> _nativeDetectionTypes;
+    BOOL _hasCleanedUp;
 }
 
 - (instancetype)initWithBridge:(RCTBridge *)bridge {
@@ -65,7 +66,7 @@ static NSString *const kPointCloudKey = @"pointCloud";
         _vroArScene->initDeclarativeSession();
         _vroArScene->setDelegate(_sceneDelegate);
         _vroArScene->getDeclarativeSession()->setDelegate(_sceneDelegate);
-        _nativeDetectionTypes = { VROAnchorDetection::PlanesHorizontal }; // default detection type is horizontal plane
+        _nativeDetectionTypes = { VROAnchorDetection::PlanesHorizontal, VROAnchorDetection::PlanesVertical };
         _vroArScene->setAnchorDetectionTypes(_nativeDetectionTypes);
     }
     return self;
@@ -228,6 +229,65 @@ static NSString *const kPointCloudKey = @"pointCloud";
             perror("Viro: Error loading point cloud image resource");
         }
     });
+}
+
+- (void)willMoveToSuperview:(UIView *)newSuperview {
+    // If newSuperview is nil, the view is being removed
+    if (newSuperview == nil) {
+        [self cleanupARSceneResources];
+    }
+    [super willMoveToSuperview:newSuperview];
+}
+
+- (void)cleanupARSceneResources {
+    // Only cleanup once per instance
+    if (_hasCleanedUp) {
+        return;
+    }
+    _hasCleanedUp = YES;
+    
+    // Clean up AR-specific resources before removing from superview
+    @try {
+        if (_vroArScene) {
+            // Reset point cloud surface
+            _vroArScene->resetPointCloudSurface();
+            
+            // Clear delegates to prevent callbacks after removal
+            _sceneDelegate = nullptr;
+            _vroArScene->setDelegate(nullptr);
+            
+            if (_vroArScene->getDeclarativeSession()) {
+                _vroArScene->getDeclarativeSession()->setDelegate(nullptr);
+            }
+        }
+        
+        // Release image loader
+        if (_loader) {
+            _loader = nil;
+        }
+        
+        // Release texture resources
+        _pointCloudSurfaceTexture = nullptr;
+        _pointCloudParticleSurface = nullptr;
+    } @catch (NSException *exception) {
+        NSLog(@"Error cleaning up AR scene: %@", exception.reason);
+    }
+}
+
+- (void)removeFromSuperview {
+    [self cleanupARSceneResources];
+    [super removeFromSuperview];
+}
+
+- (void)dealloc {
+    // Final safety net for cleanup
+    [self cleanupARSceneResources];
+    
+    // Ensure all resources are properly released
+    _sceneDelegate = nullptr;
+    _vroArScene = nullptr;
+    _pointCloudSurfaceTexture = nullptr;
+    _pointCloudParticleSurface = nullptr;
 }
 
 @end
