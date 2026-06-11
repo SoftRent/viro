@@ -25,10 +25,134 @@
 //
 
 #import "VRTARUtils.h"
+#import <AVFoundation/AVFoundation.h>
+#import <CoreLocation/CoreLocation.h>
+#import <Photos/Photos.h>
 
-@implementation VRTARUtils
+// Delegate that resolves a completion block once CLLocationManager reports a determined status.
+@interface ViroLocationRequestDelegate : NSObject <CLLocationManagerDelegate>
+@property (nonatomic, copy) void (^completion)(BOOL granted);
+@end
+
+@implementation ViroLocationRequestDelegate
+- (void)locationManager:(CLLocationManager *)manager didChangeAuthorizationStatus:(CLAuthorizationStatus)status {
+    if (status == kCLAuthorizationStatusNotDetermined) return;
+    if (self.completion) {
+        self.completion(status == kCLAuthorizationStatusAuthorizedWhenInUse ||
+                        status == kCLAuthorizationStatusAuthorizedAlways);
+        self.completion = nil;
+    }
+}
+@end
+
+@implementation VRTARUtils {
+    CLLocationManager *_locationManager;
+    ViroLocationRequestDelegate *_locationDelegate;
+}
 
 RCT_EXPORT_MODULE();
+
+RCT_EXPORT_METHOD(requestRequiredPermissions:(NSArray<NSString *> *)permissions
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
+{
+    dispatch_group_t group = dispatch_group_create();
+    NSMutableDictionary *result = [NSMutableDictionary dictionary];
+
+    if ([permissions containsObject:@"camera"]) {
+        AVAuthorizationStatus status = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo];
+        if (status == AVAuthorizationStatusAuthorized) {
+            result[@"camera"] = @YES;
+        } else if (status == AVAuthorizationStatusNotDetermined) {
+            dispatch_group_enter(group);
+            [AVCaptureDevice requestAccessForMediaType:AVMediaTypeVideo completionHandler:^(BOOL granted) {
+                result[@"camera"] = @(granted);
+                dispatch_group_leave(group);
+            }];
+        } else {
+            result[@"camera"] = @NO;
+        }
+    }
+
+    if ([permissions containsObject:@"microphone"]) {
+        AVAuthorizationStatus status = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
+        if (status == AVAuthorizationStatusAuthorized) {
+            result[@"microphone"] = @YES;
+        } else if (status == AVAuthorizationStatusNotDetermined) {
+            dispatch_group_enter(group);
+            [AVCaptureDevice requestAccessForMediaType:AVMediaTypeAudio completionHandler:^(BOOL granted) {
+                result[@"microphone"] = @(granted);
+                dispatch_group_leave(group);
+            }];
+        } else {
+            result[@"microphone"] = @NO;
+        }
+    }
+
+    if ([permissions containsObject:@"storage"]) {
+        PHAuthorizationStatus status = [PHPhotoLibrary authorizationStatus];
+        if (status == PHAuthorizationStatusAuthorized) {
+            result[@"storage"] = @YES;
+        } else if (status == PHAuthorizationStatusNotDetermined) {
+            dispatch_group_enter(group);
+            [PHPhotoLibrary requestAuthorization:^(PHAuthorizationStatus s) {
+                result[@"storage"] = @(s == PHAuthorizationStatusAuthorized);
+                dispatch_group_leave(group);
+            }];
+        } else {
+            result[@"storage"] = @NO;
+        }
+    }
+
+    if ([permissions containsObject:@"location"]) {
+        CLAuthorizationStatus status = [CLLocationManager authorizationStatus];
+        if (status == kCLAuthorizationStatusAuthorizedWhenInUse || status == kCLAuthorizationStatusAuthorizedAlways) {
+            result[@"location"] = @YES;
+        } else if (status == kCLAuthorizationStatusNotDetermined) {
+            dispatch_group_enter(group);
+            _locationManager = [[CLLocationManager alloc] init];
+            _locationDelegate = [[ViroLocationRequestDelegate alloc] init];
+            _locationDelegate.completion = ^(BOOL granted) {
+                result[@"location"] = @(granted);
+                dispatch_group_leave(group);
+            };
+            _locationManager.delegate = _locationDelegate;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [self->_locationManager requestWhenInUseAuthorization];
+            });
+        } else {
+            result[@"location"] = @NO;
+        }
+    }
+
+    dispatch_group_notify(group, dispatch_get_main_queue(), ^{
+        resolve([result copy]);
+    });
+}
+
+RCT_EXPORT_METHOD(checkPermissions:(NSArray<NSString *> *)permissions
+                  resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject)
+{
+    NSMutableDictionary *result = [NSMutableDictionary dictionary];
+
+    if ([permissions containsObject:@"camera"]) {
+        result[@"camera"] = @([AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo] == AVAuthorizationStatusAuthorized);
+    }
+    if ([permissions containsObject:@"microphone"]) {
+        result[@"microphone"] = @([AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio] == AVAuthorizationStatusAuthorized);
+    }
+    if ([permissions containsObject:@"storage"]) {
+        result[@"storage"] = @([PHPhotoLibrary authorizationStatus] == PHAuthorizationStatusAuthorized);
+    }
+    if ([permissions containsObject:@"location"]) {
+        CLAuthorizationStatus locStatus = [CLLocationManager authorizationStatus];
+        result[@"location"] = @(locStatus == kCLAuthorizationStatusAuthorizedWhenInUse ||
+                                locStatus == kCLAuthorizationStatusAuthorizedAlways);
+    }
+
+    resolve([result copy]);
+}
 
 RCT_EXPORT_METHOD(isARSupported:(RCTResponseSenderBlock)callback)
 {
@@ -37,24 +161,48 @@ RCT_EXPORT_METHOD(isARSupported:(RCTResponseSenderBlock)callback)
   callback(@[[NSNull null], props]);
 }
 
+// Helper function to convert plane classification enum to string
++ (NSString *)stringFromPlaneClassification:(VROARPlaneClassification)classification {
+    switch (classification) {
+        case VROARPlaneClassification::Wall:
+            return @"Wall";
+        case VROARPlaneClassification::Floor:
+            return @"Floor";
+        case VROARPlaneClassification::Ceiling:
+            return @"Ceiling";
+        case VROARPlaneClassification::Table:
+            return @"Table";
+        case VROARPlaneClassification::Seat:
+            return @"Seat";
+        case VROARPlaneClassification::Door:
+            return @"Door";
+        case VROARPlaneClassification::Window:
+            return @"Window";
+        case VROARPlaneClassification::Unknown:
+            return @"Unknown";
+        case VROARPlaneClassification::None:
+        default:
+            return @"None";
+    }
+}
+
 + (NSDictionary *)createDictionaryFromAnchor:(std::shared_ptr<VROARAnchor>) anchor {
-    
     NSMutableDictionary *dict = [[NSMutableDictionary alloc] init];
-    
+
     [dict setObject:[NSString stringWithUTF8String:anchor->getId().c_str()] forKey:@"anchorId"];
-    
+
     VROMatrix4f transform =  anchor->getTransform();
     VROVector3f position = transform.extractTranslation();
     VROVector3f scale = transform.extractScale();
     VROVector3f rotation = transform.extractRotation(scale).toEuler();
-    
+
     [dict setObject:@[@(position.x), @(position.y), @(position.z)] forKey:@"position"];
     [dict setObject:@[@(scale.x), @(scale.y), @(scale.z)] forKey:@"scale"];
     [dict setObject:@[@(toDegrees(rotation.x)), @(toDegrees(rotation.y)), @(toDegrees(rotation.z))] forKey:@"rotation"];
 
     // default type is "anchor", override below.
     [dict setObject:@"anchor" forKey:@"type"];
-    
+
     std::shared_ptr<VROARPlaneAnchor> planeAnchor = std::dynamic_pointer_cast<VROARPlaneAnchor>(anchor);
     if (planeAnchor) {
         [dict setObject:@"plane" forKey:@"type"];
@@ -79,8 +227,13 @@ RCT_EXPORT_METHOD(isARSupported:(RCTResponseSenderBlock)callback)
                 [dict setObject:@"Horizontal" forKey:@"alignment"];
                 break;
         }
+
+        // Add plane classification (iOS 12+, basic inference on Android)
+        VROARPlaneClassification classification = planeAnchor->getClassification();
+        NSString *classificationString = [VRTARUtils stringFromPlaneClassification:classification];
+        [dict setObject:classificationString forKey:@"classification"];
     }
-    
+
     return dict;
 }
 
