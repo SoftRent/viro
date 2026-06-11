@@ -24,8 +24,12 @@ package com.viromedia.bridge.component;
 import android.util.Log;
 
 import com.facebook.react.bridge.ReactApplicationContext;
+import com.facebook.react.bridge.ReadableMap;
+import com.facebook.react.common.MapBuilder;
 import com.facebook.react.uimanager.ThemedReactContext;
 import com.facebook.react.uimanager.annotations.ReactProp;
+
+import java.util.Map;
 
 /**
  * ARSceneNavigatorManager for building a {@link VRTARSceneNavigator}
@@ -86,5 +90,64 @@ public class VRTARSceneNavigatorManager extends VRTViroViewGroupManager<VRTARSce
     @ReactProp(name = "multisamplingEnabled", defaultBoolean = true)
     public void setMultisamplingEnabled(VRTARSceneNavigator navigator, boolean enabled) {
         navigator.setMultisamplingEnabled(enabled);
+    }
+
+    @ReactProp(name = "frontCameraEnabled")
+    public void setFrontCameraEnabled(VRTARSceneNavigator navigator, boolean enabled) {
+        navigator.setFrontCameraEnabled(enabled);
+    }
+
+    @ReactProp(name = "occlusionMode")
+    public void setOcclusionMode(VRTARSceneNavigator navigator, String mode) {
+        navigator.setOcclusionMode(mode);
+    }
+
+    @ReactProp(name = "depthEnabled", defaultBoolean = false)
+    public void setDepthEnabled(VRTARSceneNavigator navigator, boolean enabled) {
+        navigator.setDepthEnabled(enabled);
+    }
+
+    @ReactProp(name = "semanticDebugEnabled", defaultBoolean = false)
+    public void setSemanticDebugEnabled(VRTARSceneNavigator navigator, boolean enabled) {
+        navigator.setSemanticDebugEnabled(enabled);
+    }
+
+    @ReactProp(name = "semanticConfidenceThreshold", defaultFloat = 0.0f)
+    public void setSemanticConfidenceThreshold(VRTARSceneNavigator navigator, float threshold) {
+        navigator.setSemanticConfidenceThreshold(threshold);
+    }
+
+    @ReactProp(name = "cloudAnchorProvider")
+    public void setCloudAnchorProvider(VRTARSceneNavigator navigator, String provider) {
+        navigator.setCloudAnchorProvider(provider);
+    }
+
+    @ReactProp(name = "geospatialAnchorProvider")
+    public void setGeospatialAnchorProvider(VRTARSceneNavigator navigator, String provider) {
+        navigator.setGeospatialAnchorProvider(provider);
+    }
+
+    @ReactProp(name = "worldMeshEnabled", defaultBoolean = false)
+    public void setWorldMeshEnabled(VRTARSceneNavigator navigator, boolean enabled) {
+        navigator.setWorldMeshEnabled(enabled);
+    }
+
+    @ReactProp(name = "worldMeshConfig")
+    public void setWorldMeshConfig(VRTARSceneNavigator navigator, ReadableMap config) {
+        navigator.setWorldMeshConfig(config);
+    }
+
+    @Override
+    public Map<String, Object> getExportedCustomDirectEventTypeConstants() {
+        Map<String, Object> events = super.getExportedCustomDirectEventTypeConstants();
+        if (events == null) {
+            events = MapBuilder.newHashMap();
+        }
+
+        // Export the onTabSwitch event so React can listen to it
+        // This event is emitted when a tab switch is detected (window reattach after detach)
+        events.put("onTabSwitch", MapBuilder.of("registrationName", "onTabSwitch"));
+
+        return events;
     }
 }
