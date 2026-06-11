@@ -33,9 +33,9 @@ import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.bridge.WritableArray;
 import com.facebook.react.bridge.WritableMap;
 import com.facebook.react.uimanager.IllegalViewOperationException;
-import com.facebook.react.uimanager.NativeViewHierarchyManager;
-import com.facebook.react.uimanager.UIBlock;
-import com.facebook.react.uimanager.UIManagerModule;
+import com.facebook.react.bridge.UIManager;
+import com.facebook.react.fabric.FabricUIManager;
+import com.facebook.react.uimanager.UIManagerHelper;
 import com.facebook.react.module.annotations.ReactModule;
 import com.viro.core.BoundingBox;
 import com.viro.core.Matrix;
@@ -56,7 +56,11 @@ public class NodeModule extends ReactContextBaseJavaModule {
     public NodeModule(ReactApplicationContext context) {
         super(context);
     }
-
+    // https://stackoverflow.com/a/44879687
+    @Override
+    public boolean canOverrideExistingModule() {
+        return true;
+    }
     @Override
     public String getName() {
         return "VRTNodeModule";
@@ -64,11 +68,14 @@ public class NodeModule extends ReactContextBaseJavaModule {
 
     @ReactMethod
     public void applyImpulse(final int viewTag, final ReadableArray force, final ReadableArray position) {
-        UIManagerModule uiManager = getReactApplicationContext().getNativeModule(UIManagerModule.class);
-        uiManager.addUIBlock(new UIBlock() {
+        UIManager uiManager = UIManagerHelper.getUIManager(getReactApplicationContext(), viewTag);
+        if (uiManager == null) {
+            return;
+        }
+        ((FabricUIManager) uiManager).addUIBlock(new com.facebook.react.fabric.interop.UIBlock() {
             @Override
-            public void execute(NativeViewHierarchyManager nativeViewHierarchyManager) {
-                View viroView = nativeViewHierarchyManager.resolveView(viewTag);
+            public void execute(com.facebook.react.fabric.interop.UIBlockViewResolver viewResolver) {
+                View viroView = viewResolver.resolveView(viewTag);
                 if (!(viroView instanceof VRTNode)){
                     throw new IllegalViewOperationException("Invalid view returned when applying force: expected a node-type control!");
                 }
@@ -98,11 +105,14 @@ public class NodeModule extends ReactContextBaseJavaModule {
 
     @ReactMethod
     public void applyTorqueImpulse(final int viewTag, final ReadableArray torque) {
-        UIManagerModule uiManager = getReactApplicationContext().getNativeModule(UIManagerModule.class);
-        uiManager.addUIBlock(new UIBlock() {
+        UIManager uiManager = UIManagerHelper.getUIManager(getReactApplicationContext(), viewTag);
+        if (uiManager == null) {
+            return;
+        }
+        ((FabricUIManager) uiManager).addUIBlock(new com.facebook.react.fabric.interop.UIBlock() {
             @Override
-            public void execute(NativeViewHierarchyManager nativeViewHierarchyManager) {
-                View viroView = nativeViewHierarchyManager.resolveView(viewTag);
+            public void execute(com.facebook.react.fabric.interop.UIBlockViewResolver viewResolver) {
+                View viroView = viewResolver.resolveView(viewTag);
                 if (!(viroView instanceof VRTNode)){
                     throw new IllegalViewOperationException("Invalid view returned when applying force: expected a node-type control!");
                 }
@@ -120,11 +130,14 @@ public class NodeModule extends ReactContextBaseJavaModule {
 
     @ReactMethod
     public void setVelocity(final int viewTag, final ReadableArray velocity) {
-        UIManagerModule uiManager = getReactApplicationContext().getNativeModule(UIManagerModule.class);
-        uiManager.addUIBlock(new UIBlock() {
+        UIManager uiManager = UIManagerHelper.getUIManager(getReactApplicationContext(), viewTag);
+        if (uiManager == null) {
+            return;
+        }
+        ((FabricUIManager) uiManager).addUIBlock(new com.facebook.react.fabric.interop.UIBlock() {
             @Override
-            public void execute(NativeViewHierarchyManager nativeViewHierarchyManager) {
-                View viroView = nativeViewHierarchyManager.resolveView(viewTag);
+            public void execute(com.facebook.react.fabric.interop.UIBlockViewResolver viewResolver) {
+                View viroView = viewResolver.resolveView(viewTag);
                 if (!(viroView instanceof VRTNode)){
                     throw new IllegalViewOperationException("Invalid view returned when applying velocity: expected a node-type control!");
                 }
@@ -143,11 +156,15 @@ public class NodeModule extends ReactContextBaseJavaModule {
     @ReactMethod
     public void getNodeTransform(final int viewTag, final Promise promise)
      {
-         UIManagerModule uiManager = getReactApplicationContext().getNativeModule(UIManagerModule.class);
-         uiManager.addUIBlock(new UIBlock() {
+         UIManager uiManager = UIManagerHelper.getUIManager(getReactApplicationContext(), viewTag);
+         if (uiManager == null) {
+             promise.reject("ERROR", "UIManager not available");
+             return;
+         }
+         ((FabricUIManager) uiManager).addUIBlock(new com.facebook.react.fabric.interop.UIBlock() {
              @Override
-             public void execute(NativeViewHierarchyManager nativeViewHierarchyManager) {
-                 View viroView = nativeViewHierarchyManager.resolveView(viewTag);
+             public void execute(com.facebook.react.fabric.interop.UIBlockViewResolver viewResolver) {
+                 View viroView = viewResolver.resolveView(viewTag);
                  VRTNode nodeView = (VRTNode) viroView;
                  if (!(viroView instanceof VRTNode)){
                      throw new IllegalViewOperationException("Invalid view, expected VRTNode!");
@@ -186,11 +203,15 @@ public class NodeModule extends ReactContextBaseJavaModule {
     @ReactMethod
     public void getBoundingBox(final int viewTag, final Promise promise)
     {
-        UIManagerModule uiManager = getReactApplicationContext().getNativeModule(UIManagerModule.class);
-        uiManager.addUIBlock(new UIBlock() {
+        UIManager uiManager = UIManagerHelper.getUIManager(getReactApplicationContext(), viewTag);
+        if (uiManager == null) {
+            promise.reject("ERROR", "UIManager not available");
+            return;
+        }
+        ((FabricUIManager) uiManager).addUIBlock(new com.facebook.react.fabric.interop.UIBlock() {
             @Override
-            public void execute(NativeViewHierarchyManager nativeViewHierarchyManager) {
-                View viroView = nativeViewHierarchyManager.resolveView(viewTag);
+            public void execute(com.facebook.react.fabric.interop.UIBlockViewResolver viewResolver) {
+                View viroView = viewResolver.resolveView(viewTag);
                 VRTNode nodeView = (VRTNode) viroView;
                 if (!(viroView instanceof VRTNode)){
                     throw new IllegalViewOperationException("Invalid view, expected VRTNode!");
@@ -215,11 +236,15 @@ public class NodeModule extends ReactContextBaseJavaModule {
 
     @ReactMethod
     public void getMorphTargets(final int viewTag, final Promise promise) {
-        UIManagerModule uiManager = getReactApplicationContext().getNativeModule(UIManagerModule.class);
-        uiManager.addUIBlock(new UIBlock() {
+        UIManager uiManager = UIManagerHelper.getUIManager(getReactApplicationContext(), viewTag);
+        if (uiManager == null) {
+            promise.reject("ERROR", "UIManager not available");
+            return;
+        }
+        ((FabricUIManager) uiManager).addUIBlock(new com.facebook.react.fabric.interop.UIBlock() {
             @Override
-            public void execute(NativeViewHierarchyManager nativeViewHierarchyManager) {
-                View viroView = nativeViewHierarchyManager.resolveView(viewTag);
+            public void execute(com.facebook.react.fabric.interop.UIBlockViewResolver viewResolver) {
+                View viroView = viewResolver.resolveView(viewTag);
                 VRT3DObject nodeView = (VRT3DObject) viroView;
                 if (!(viroView instanceof VRT3DObject)) {
                     throw new IllegalViewOperationException("Invalid view, expected VRT3DObject!");
