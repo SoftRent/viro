@@ -35,7 +35,11 @@ import java.lang.ref.WeakReference;
 
 @ReactModule(name = "VRTPerfMonitor")
 public class PerfMonitor extends ReactContextBaseJavaModule {
-
+    // https://stackoverflow.com/a/44879687
+    @Override
+    public boolean canOverrideExistingModule() {
+        return true;
+    }
     private static class PerfOptionHandler implements DevOptionHandler {
 
         private WeakReference<PerfMonitor> mPerfMonitor;
@@ -76,7 +80,7 @@ public class PerfMonitor extends ReactContextBaseJavaModule {
             Application application = getCurrentActivity().getApplication();
             if (application instanceof ReactApplication) {
                 ReactApplication reactApplication = (ReactApplication) application;
-                DevSupportManager devSupport = reactApplication.getReactNativeHost().getReactInstanceManager().getDevSupportManager();
+                DevSupportManager devSupport = reactApplication.getReactHost().getDevSupportManager();
                 devSupport.addCustomDevOption("[Viro] Toggle FPS Display", new PerfOptionHandler(this));
 
                 mIsInitialized = true;
