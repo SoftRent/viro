@@ -46,7 +46,11 @@ public class ARTrackingTargetsModule extends ReactContextBaseJavaModule {
         void onComplete(String key, ARImageTarget target);
         void onError(Exception e);
     }
-
+    // https://stackoverflow.com/a/44879687
+    @Override
+    public boolean canOverrideExistingModule() {
+        return true;
+    }
     /**
      * This class follows the Promise pattern in that it will asynchronously fetch the data while
      * allowing the function to return immediately.
@@ -88,7 +92,7 @@ public class ARTrackingTargetsModule extends ReactContextBaseJavaModule {
 
                 @Override
                 public void completed(Bitmap result) {
-                    mARImageTarget = new ARImageTarget(result, mOrientation, mPhysicalWidth);
+                    mARImageTarget = new ARImageTarget(result, mOrientation, mPhysicalWidth, mKey);
 
                     synchronized(this) {
                         mReady = true;
