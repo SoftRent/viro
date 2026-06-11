@@ -21,6 +21,7 @@
 
 #import "ViroViewManager.h"
 
+#import <objc/runtime.h>
 #import <React/RCTBridge.h>
 #import <React/RCTConvert.h>
 #import <React/RCTEventDispatcher.h>
@@ -35,6 +36,67 @@
 #import "VRTView.h"
 #import "VRTShadowView.h"
 #import "VRTNode.h"
+
+// Inline Fabric crash fix implementation
+@interface ViroCrashFix : NSObject
++ (void)installCrashFix;
+@end
+
+@implementation ViroCrashFix
+
++ (void)installCrashFix {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        [self swizzleRemoveFromSuperview];
+    });
+}
+
++ (void)swizzleRemoveFromSuperview {
+    Class viewClass = [UIView class];
+    SEL originalSelector = @selector(removeFromSuperview);
+    SEL swizzledSelector = @selector(viro_safeRemoveFromSuperview);
+    
+    Method originalMethod = class_getInstanceMethod(viewClass, originalSelector);
+    Method swizzledMethod = class_getInstanceMethod(viewClass, swizzledSelector);
+    
+    if (originalMethod && swizzledMethod) {
+        method_exchangeImplementations(originalMethod, swizzledMethod);
+    }
+}
+
+@end
+
+@implementation UIView (ViroCrashFix)
+
+- (void)viro_safeRemoveFromSuperview {
+    @try {
+        if (!self) {
+            return;
+        }
+        
+        // Clear pointer interactions that cause the crash
+        if ([self respondsToSelector:@selector(interactions)]) {
+            @try {
+                self.interactions = @[];
+            } @catch (NSException *exception) {
+                // Only log errors for debugging
+                NSLog(@"VRT: Error clearing interactions: %@", exception.reason);
+            }
+        }
+        
+        if (!self.superview) {
+            return; // Already removed
+        }
+        
+        [self viro_safeRemoveFromSuperview]; // This calls the original method
+        
+    } @catch (NSException *exception) {
+        // Log critical errors that would have caused crashes
+        NSLog(@"VRT: Prevented crash in removeFromSuperview: %@", exception.reason);
+    }
+}
+
+@end
 
 
 @implementation RCTConvert(UIAccessibilityTraits)
@@ -57,6 +119,9 @@ RCT_MULTI_ENUM_CONVERTER(UIAccessibilityTraits, (@{
                                                    @"adjustable": @(UIAccessibilityTraitAdjustable),
                                                    @"allowsDirectInteraction": @(UIAccessibilityTraitAllowsDirectInteraction),
                                                    @"pageTurn": @(UIAccessibilityTraitCausesPageTurn),
+                                                   @"switch": @(SwitchAccessibilityTrait),
+                                                   @"tabbar": @(UIAccessibilityTraitTabBar),
+                                                   @"tablist" : @(UIAccessibilityTraitNone),
                                                    }), UIAccessibilityTraitNone, unsignedLongLongValue)
 
 @end
@@ -79,7 +144,16 @@ RCT_EXPORT_MODULE()
 
 - (VRTView *)view
 {
-    return [VRTView new];
+    // Install the Fabric crash fix on first view creation
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        [ViroCrashFix installCrashFix];
+    });
+    
+    VRTView *view = [VRTView new];
+    // Add a flag to track if we're in recycling mode - for Fabric compatibility
+    objc_setAssociatedObject(view, "ViroSafeForRecycling", @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    return view;
 }
 
 - (VRTShadowView *)shadowView
