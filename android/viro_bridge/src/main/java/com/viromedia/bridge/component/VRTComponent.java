@@ -28,7 +28,7 @@ import android.view.View;
 import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.ReactContext;
 import com.facebook.react.bridge.WritableMap;
-import com.facebook.react.uimanager.events.RCTEventEmitter;
+import com.viromedia.bridge.utility.ViroEventEmitter;
 import com.facebook.react.views.view.ReactViewGroup;
 import com.viro.core.ViroContext;
 import com.viromedia.bridge.component.node.VRTScene;
@@ -202,7 +202,20 @@ public class VRTComponent extends ReactViewGroup {
      * Children should override and invoke this super method.
      */
     public void onTearDown() {
-        mTornDown = true;
+        try {
+            // Clear references to parent components
+            mScene = null;
+            mViroContext = null;
+            
+            // Reset state flags
+            mParentHasAppeared = false;
+            
+            // Mark as torn down
+            mTornDown = true;
+        } catch (Exception e) {
+            // Log error but don't crash
+            android.util.Log.e(TAG, "Error during component base teardown: " + e.getMessage());
+        }
     }
 
     /**
@@ -342,9 +355,6 @@ public class VRTComponent extends ReactViewGroup {
         WritableMap event = Arguments.createMap();
         event.putString("error", error);
 
-        mReactContext.getJSModule(RCTEventEmitter.class).receiveEvent(
-                getId(),
-                ViroEvents.ON_ERROR,
-                event);
+        ViroEventEmitter.emit(mReactContext, getId(), ViroEvents.ON_ERROR, event);
     }
 }
