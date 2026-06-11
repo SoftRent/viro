@@ -29,6 +29,7 @@
 #import <ViroKit/ViroKit.h>
 #import "VRTARSceneNavigatorManager.h"
 #import "VRTARSceneNavigator.h"
+#import "VRTFabricCrashFix.h"
 
 @implementation VRTARSceneNavigatorManager
 
@@ -44,10 +45,39 @@ RCT_EXPORT_VIEW_PROPERTY(pbrEnabled, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(bloomEnabled, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(shadowsEnabled, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(multisamplingEnabled, BOOL)
+RCT_EXPORT_VIEW_PROPERTY(occlusionMode, NSString)
+RCT_EXPORT_VIEW_PROPERTY(depthEnabled, BOOL)
+RCT_EXPORT_VIEW_PROPERTY(depthDebugEnabled, BOOL)
+RCT_EXPORT_VIEW_PROPERTY(monocularDepthScale, float)
+RCT_EXPORT_VIEW_PROPERTY(monocularDepthTargetFPS, int)
+RCT_EXPORT_VIEW_PROPERTY(frontCameraEnabled, BOOL)
+RCT_EXPORT_VIEW_PROPERTY(semanticDebugEnabled, BOOL)
+RCT_EXPORT_VIEW_PROPERTY(semanticConfidenceThreshold, float)
+RCT_EXPORT_VIEW_PROPERTY(cloudAnchorProvider, NSString)
+RCT_EXPORT_VIEW_PROPERTY(geospatialAnchorProvider, NSString)
+RCT_EXPORT_VIEW_PROPERTY(worldMeshEnabled, BOOL)
+RCT_EXPORT_VIEW_PROPERTY(worldMeshConfig, NSDictionary)
+RCT_EXPORT_VIEW_PROPERTY(onWorldMeshUpdated, RCTDirectEventBlock)
 
 - (VRTARSceneNavigator *)view
 {
+    // Install crash fix for Fabric view recycling (protects all Viro components except ARSceneNavigator)
+    // ARSceneNavigator uses +shouldBeRecycled to disable recycling entirely (too heavy at 700MB+)
+    [VRTFabricCrashFix installFabricCrashFix];
+
     return [[VRTARSceneNavigator alloc] initWithBridge:self.bridge];
 }
+
+#ifdef RCT_NEW_ARCH_ENABLED
+// Fabric-specific: Force invalidation when view is removed
+- (void)invalidateView:(UIView *)view
+{
+    if ([view isKindOfClass:[VRTARSceneNavigator class]]) {
+        VRTARSceneNavigator *navigator = (VRTARSceneNavigator *)view;
+        [navigator invalidate];
+        [navigator cleanupViroResources];
+    }
+}
+#endif
 
 @end
