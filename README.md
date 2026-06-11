@@ -1,238 +1,160 @@
-:information_source: | Active development for Viro is now occurring at the [Viro Community](https://github.com/ViroCommunity) fork. We encourage all Viro developers to follow and get the latest updates at [ViroCommunity/viro](https://github.com/ViroCommunity/viro)
-:---: | :---
+<p align="center" style="background-colour: #CCCCCC;">
+  <a href="https://www.reactvision.xyz/">
+    <img src="https://avatars.githubusercontent.com/u/74572641?s=200&v=4" alt="ReactVision logo" width="120px" height="120px">
+  </a>
+</p>
 
-# Viro React
-Viro React is a platform for developers to rapidly build augmented reality (AR) and virtual reality (VR) experiences. Developers write in React Native, and Viro runs their code natively across all mobile VR (including Google Daydream, Samsung Gear VR, and Google Cardboard for iOS and Android) and AR (iOS ARKit and Android ARCore) platforms. [More info here](http://docs.viromedia.com/).
+<p align="center">
+  <a href="https://www.npmjs.com/package/@reactvision/react-viro">
+    <img src="https://img.shields.io/npm/v/@reactvision/react-viro" alt="npm version">
+  </a>
+  <a href="https://www.npmjs.com/package/@reactvision/react-viro">
+    <img src="https://img.shields.io/npm/dm/@reactvision/react-viro?colour=purple" alt="downloads">
+  </a>
+  <a href="https://discord.gg/yqqEGUjK">
+    <img src="https://img.shields.io/discord/774471080713781259?label=Discord" alt="Discord">
+  </a>
+</p>
 
-This project contains the full source code for Viro React, and various sample Viro projects.
+# ViroReact, By ReactVision
 
-The platform is free to use with no limits on distribution.
+ViroReact is the most widely used open-source library for building Augmented Reality (AR) and Virtual Reality (VR) experiences with React Native. Write your app once in TypeScript and ship it natively across mobile AR and VR headsets — no new engine, no new language, no months of ramp-up.
 
-To report bugs/issues with Viro platform, please file new issues on this repository.
+ViroReact is MIT licensed and free forever.
 
-![Viro Bridge CI Pipeline](https://github.com/dthian/viro/workflows/Viro%20Bridge%20CI%20Pipeline/badge.svg)
+## Supported Platforms
 
-## Instructions for running sample projects using Testbed app:
+| Platform         | Support      |
+| ---------------- | ------------ |
+| iOS (ARKit)      | ✅ Supported |
+| Android (ARCore) | ✅ Supported |
+| Meta Horizon OS  | ✅ Supported |
 
-1. Follow directions on our [Quick start guide](https://docs.viromedia.com/docs/quick-start) to setup dependencies for trying these sample projects with the Viro Media App.
-2. Clone the repo into your workspace with git: `git clone https://github.com/viromedia/viro.git`.
-3. Go into the code-samples directory.
-4. Run `npm install` from the root of this project.
-5. Run `npm start` from the root of this project.
-6. Open the Viro Media App, slide out the left panel and select "Enter Testbed".
-7. Type the entire ngrok URL output (xxxxxx.ngrok.io) at the top of the terminal into the text field and hit 'GO'
-8. You should now be in the application! Enjoy!
+ViroReact works with both **React Native CLI** and **Expo** projects.
 
-To rebuild the testbed app from source, please refere to the testbed repo [here](https://github.com/viromedia/viro-media-app/tree/master).
+## Installation
 
-## Instructions for running sample code as a stand alone project (with no Testbed app):
-Tried the samples through our Testbed app and now want to try deploying sample code to your device as standalone apps? These quick steps below should get you started:
-1. Follow steps 1 - 4 from above (instructions for using with Testbed app)
-2. For Android, make sure you have downloaded and installed Android Studio from [here](https://developer.android.com/studio/install) to get required SDK and platform-tools for building android apps
-    Make sure you have the required environment variables set - `$ANDROID_HOME`, and added `platform-tools` to `$PATH` variable. If not,
-    ```
-    export ANDROID_HOME=/YOUR_PATH_TO/Android/sdk
-    export PATH=$ANDROID_HOME/platform-tools:$PATH
-    export PATH=$ANDROID_HOME/tools:$PATH
-    ```
-    Build and launch android app by executing the following from the root of the project
-    ```
-    react-native run-android --variant=gvrDebug
-    ```
-3. For iOS, in Xcode open `ViroSample.xcworkspace` in `ios/` directory.
-    Select the right "Team" for `ViroSample` and `ViroSampleTest` target under `General -> Signing`
-    Hit play to build and launch the app on your iOS device
+```bash
+npm install @reactvision/react-viro
+```
 
-### Changing Between Samples
+For Expo projects, the easiest way to start is to clone the official starter kit:
 
-1. Open App.js in a text editor.
-2. For AR, set showARScene=true at line 44.
-3. For VR, Modify line 61: `scene: scenes['360 Photo Tour'],` to a scene defined in the `scenes` dictionary on line 30.
-3. Reload/restart the application.
+- **Expo + TypeScript starter kit:** <https://github.com/ReactVision/expo-starter-kit-typescript>
+- **React Native CLI starter kit:** <https://github.com/ReactVision/starter-kit>
 
-## Instructions for using a CI-built Viro React platform from Mainline:
-You can also try the latest mainline build containing bleeding edge features and fixes. Please keep in mind that mainline builds may not be as stable as release builds. To do so, simply:
+For step-by-step setup instructions, including platform-specific permissions and build configuration, see the full installation guide in the docs: <https://viro-community.readme.io/docs/installation-instructions>
 
-1. Go to the [Viro Actions Workflows](https://github.com/viromedia/viro/actions) for this project.
-2. You should see a list of "Viro Bridge CI Pipeline" workflows.
-3. Click on the latest successfully built workflow pipeline (should be a checkmark next to it).
-4. Download the latest built ViroReact.tgz artiface.
-4. Clone this repo into your workspace with git: `git clone https://github.com/viromedia/viro.git`.
-5. Go into the code-samples directory.
-6. Run `npm install` from the root of this project. 
-7. Remove the ViroReact framework that was pulled down from the npm install (you are going to use the pre-built one).
-8. npm install ../path/to/your/downloadedArtifact.tgz
+## MCP Server
 
-## Instructions for manually building the Viro React platform:
+If you're building AR, VR or XR apps with ViroReact, our MCP server is the fastest way to get moving. Think of it as a living guide to ViroReact, always current, that plugs straight into the tools you already use.
 
-### Building iOS Viro React:
+Connect it to Claude, Codex, Cursor or any other coding agent, and your agent instantly understands how to work with ViroReact's cross-platform rendering. No hunting through docs, no guesswork. (Our documentation is still a great companion, but the MCP is the most up to date source there is.)
 
-1. Follow directions on our [Quick start guide](https://docs.viromedia.com/docs/quick-start) to setup dependencies.
-2. Clone the repo into your workspace with git: `git clone https://github.com/viromedia/viro.git`.
-3. Build our iOS renderer using build instructions outlined in our [Virocore](https://github.com/viromedia/virocore/blob/master/README.md) repo.
-4. Verify you see new files created in `ios/dist` folder.
-5. Install pods in `ios/` folder:
-   ```
-   cd ios
-   pod install
-   ```
-6. Install node_modules in test folder:
-   ```
-   cd test
-   npm install
-   ```
-7. Install pods in the `ViroExample` folder:
-   ```
-   cd test/ios/ViroExample
-   pod install
-   ```
-8. Open `ViroExample.xcworkspace` in Xcode. (Make sure you open the .xcworkpace file, and **not*** the .xcodeproj file!)
-9. Select Product->Scheme. If you don't see a `React` scheme, hit `Manage Schemes...`. In the dialog box, add `React` scheme.
-10. Go through build configuration (Debug vs Release) for schemes `React`, `ViroReact` and `ViroExample` and ensure they are all either Release or Debug, depending on what you are trying to build.
-11. That's it! Now build React scheme for `Generic iOS Device`, followed by ViroReact scheme for the same target.
-Note:
-    ```
-    11.a If you want the ability to run on Simulator, 
-         change target to any of the `iOS Simulator` targets instead of `Generic iOS Device`. 
-    11.b If in your own app project setup, you prefer to include Viro React as a static library 
-         rather than relying on `use_frameworks!` - build scheme `ViroReact_static_lib` 
-         instead of `ViroReact` as mentioned above in step #11. 
-    ```
-12. You should see a new file `libViroReact.a` at `ios/dist/lib/libViroReact.a`.
-13. To run Viro React tests, run `ViroExample` scheme on your plugged in iOS device.
+[MCP Setup Instructions](https://viro-community.readme.io/docs/viroreact-mcp-server)
 
-### Building Android Viro React:
-1. Under the viro directory, run `./prepareRelease.sh`.
-2. Your android bridge should now be built under release.
-3. You should see a new file created at android/react_viro/react_viro-release.aar
-4. To build android release tests:
-   ```
-   $ cd test/android
-   $ ./gradlew assembleGvrRelease
-   ```
-5. Install app-gvr-release.apk from `test/android/app/build/output/gvr/app-gvr-release.apk` onto your plugged in Android device.
+## Features
 
+ViroReact ships with a complete spatial computing toolkit out of the box — no third-party plugins, no paid add-ons.
 
-### Bundling and using built iOS and Android into a single npm tar package:
-1. The `./prepareRelease.sh` you ran above builds android react bridge and bundles both iOS and Android bridge into a `react-viro-*.tgz` file. * for current version from `package.json` file.
+**Tracking and anchoring**
 
-## More information
+- AR plane detection with horizontal and vertical surface anchors
+- Image and object recognition triggers
+- Cloud Anchors for persistent, multi-user shared AR content _(Platform feature)_
+- Geospatial Anchors that pin content to real-world latitude, longitude, and altitude _(Platform feature)_
 
-Check out our [website](http://www.viromedia.com/).
+**Rendering**
 
-Look at our [documentation](http://docs.viromedia.com/).
+- PBR lighting, HDR environment maps, and real-time shadow casting
+- 360° photo and video environments
+- Portal rendering for immersive pass-through experiences
+- OBJ, FBX, and GLTF/GLB model loading with embedded animations
+- Custom procedural geometry and custom GPU shaders
 
-Join our Slack group [here](https://join.slack.com/t/virodevelopers/shared_invite/enQtMzI3MzgwNDM2NDM5LTdhMjg5OTJkZGEwYmI0Yzg0N2JkMzJhODVmNmY4YmUyOGY4YjMyZmFmMGFhMTMyMzZiYzU0MGUxMGIzZDFiNjY).
+**Interaction and motion**
 
-## Sample Code
+- Built-in physics engine with dynamic and static bodies, collision callbacks
+- Particle system for fire, smoke, rain, snow, confetti, and other effects
+- Declarative animation system with sequencing and chaining
+- Full input event system: tap, drag, pinch, rotate, fuse, hover
 
-### [Figment AR (Complete Open Source App)](https://github.com/viromedia/figment-ar)
-A repository containing the entire source code, built using ViroReact and React Native, for Viro Media's award winning Figment AR App. Available on [Google Play](https://play.google.com/store/apps/details?id=com.viro.figment) and [App Store](https://itunes.apple.com/us/app/figment-ar/id1270018902?mt=8).
+**Audio**
 
-<a href="https://github.com/viromedia/figment-ar"><img src="code-samples/screenshots/figment_1.png" width="200"/> <img src="code-samples/screenshots/figment_2.png" width="200"/> <img src="code-samples/screenshots/figment_3.png" width="200"/> <img src="code-samples/screenshots/figment_4.png" width="200"/></a>
+- Spatial audio, 360° sound fields, and positioned 3D audio
 
-#### Download complete source at https://github.com/viromedia/figment-ar
+## Platform Features
 
-### Sample Code Overview
+Cloud Anchors, Geospatial Anchors, and AI-powered 3D asset creation are powered by **ReactVision Platform** — managed cloud infrastructure built directly into ViroReact. Add your `rvApiKey` and `rvProjectId` and the platform handles hosting, resolution, and geospatial infrastructure for you.
 
-A scene with a 360 photo that displays "Hello World".
+You can get a Studio account, which includes Platform access, for free at <https://studio.reactvision.xyz>.
 
-### [360 Photo Tour](https://github.com/viromedia/viro/tree/master/code-samples/js/360PhotoTour)
+- Cloud Anchors guide: <https://viro-community.readme.io/docs/cloud-anchors>
+- Geospatial Anchors guide: <https://viro-community.readme.io/docs/geospatial-anchors>
 
-<a href="https://github.com/viromedia/viro/tree/master/code-samples/js/HelloWorld">
-<img src="https://raw.githubusercontent.com/viromedia/viro/master/code-samples/js/360PhotoTour/360_photo_tour.gif">
+## Studio
+
+[ReactVision Studio](https://studio.reactvision.xyz) is our browser-based visual scene editor for AR and VR. Build scenes visually in Studio, then embed them inside your own ViroReact app with a single component. Designers and developers can iterate on a scene in Studio and have it update in production without a new app build.
+
+**Build scenes visually**
+
+- **Placement** — drag-and-drop 3D objects, images, video, text, and primitives into a scene with visual gizmos for position, rotation, and scale. No JSX required to lay out a scene.
+- **AI asset generation** — generate 3D models from a text prompt or reference image directly inside the editor, powered by ReactVision Platform.
+- **Animations** — author keyframe and property animations on a timeline, chain them into sequences, and trigger them from interactions or scene events.
+- **Physics** — assign dynamic, static, or kinematic bodies to objects, configure mass, friction, and restitution, and wire up collision callbacks — the same physics engine ViroReact ships with, exposed visually.
+
+**Embed Studio scenes in your app**
+
+Drop the `StudioSceneNavigator` component into your ViroReact app, point it at a Studio scene, and your app picks up whatever your team is editing in Studio without a new native build.
+
+**Getting started**
+
+Full walkthrough — including Studio setup, exporting a scene, and wiring `StudioSceneNavigator` into a React Native app — is in our blog: <https://updates.reactvision.xyz/how-to-build-your-first-ar-vr-app-with-studio-and-react-native-f2421ecce9ae>
+
+## Documentation
+
+- Full API reference and guides: <https://viro-community.readme.io/docs/overview>
+- Getting started tutorial: <https://updates.reactvision.xyz/get-started-with-the-viroreact-and-expo-starter-kit-a9ca88803e5a>
+
+## Community
+
+Discord is the best place to find the team and other developers building with ViroReact:
+
+<a href="https://discord.gg/A6TaFNqwVc">
+  <img src="https://discordapp.com/api/guilds/774471080713781259/widget.png?style=banner2" />
 </a>
 
-360 photo tour example that shows you how to display a 360 photo with clickable hot spots.
+## Enterprise Support and Partners
 
-### [Human Body](https://github.com/viromedia/viro/tree/master/code-samples/js/HumanBody)
+For teams adopting XR at scale, the ReactVision team works directly with you on architecture, migrations from 8th Wall or Unity, performance audits, and shipping production experiences. <https://reactvision.xyz/contact>
 
-<a href="https://github.com/viromedia/viro/tree/master/code-samples/js/HumanBody">
-<img src="https://raw.githubusercontent.com/viromedia/viro/master/code-samples/js/HumanBody/heart_demo.gif">
-</a>
+For independent agencies and consultants vetted by the ReactVision team: <https://reactvision.xyz/partners>
 
-This example showcases 3d objects. Orbit around a 3d Heart to see it from different angles!
+## Supporters
 
-### [VR MediaPlayer](https://github.com/viromedia/viro/tree/master/code-samples/js/ViroMediaPlayer)
+A huge thank you to everyone who supports ongoing development by sponsoring us on GitHub: <https://github.com/sponsors/ReactVision>
 
-<a href="https://github.com/viromedia/viro/tree/master/code-samples/js/ViroMediaPlayer">
-<img src="https://raw.githubusercontent.com/viromedia/viro/master/code-samples/js/ViroMediaPlayer/movie_theater.gif">
-</a>
+- [Device Cloud](https://devicecloud.dev/)
+- [Looking Glass](http://looking-glass.space)
+- [@lentesta](https://github.com/lentesta)
 
-Learn how to display and play 2d and 360 video with interactive play controls that can play, pause and stop.
+## Powered by
 
-### [Product Showcase](https://github.com/viromedia/viro/tree/master/code-samples/js/ProductShowcase)
+[![JetBrains logo](https://resources.jetbrains.com/storage/products/company/brand/logos/jetbrains.svg)](https://jb.gg/OpenSource)
 
-<a href="https://github.com/viromedia/viro/tree/master/code-samples/js/ProductShowcase">
-<img src="https://raw.githubusercontent.com/viromedia/viro/master/code-samples/js/ProductShowcase/product_showcase.gif">
-</a>
+JetBrains supports ViroReact development through their [Open Source program](https://jb.gg/OpenSource).
 
-Learn how to display and play 2d and 360 video with interactive play controls that can play, pause and stop.
-A demonstration on how to do an interactive shopping app for TV's. Uses flexbox for UI and 3d objects with animations.
+## Find Out More
 
-### [AR Sample](https://github.com/viromedia/viro/tree/master/code-samples/js/ARSample)
+- Website: <https://reactvision.xyz>
+- ViroReact: <https://reactvision.xyz/viro-react>
+- ReactVision Studio: <https://studio.reactvision.xyz>
+- Blog: <https://updates.reactvision.xyz>
 
-<a href="https://github.com/viromedia/viro/tree/master/code-samples/js/ARSample">
-<img src="https://raw.githubusercontent.com/viromedia/viro/master/code-samples/js/ARSample/ar_sample.gif">
-</a>
+## A little history…
 
-A scene with objects, text and animation displayed on ARKit planes detected in the scene.
+ViroReact was originally developed by Viro Media and open-sourced in 2019. In late 2020, the Viro Community formed to maintain and modernise the project, keeping it compatible with current React Native versions. In January 2025, Morrow Digital acquired the project to invest in its future, and in late 2025 ReactVision was spun out as an independent company with a full-time team building the next generation of XR tooling.
 
-### [AR Car Marker Demo](https://github.com/viromedia/viro/tree/master/code-samples/js/ARCarDemo)
+---
 
-<a href="https://github.com/viromedia/viro/tree/master/code-samples/js/ARCarDemo">
-<img src="https://raw.githubusercontent.com/viromedia/viro/master/code-samples/js/ARCarDemo/viro_car_marker_demo.gif">
-</a>
-
-An ARScene that looks for this [image](https://github.com/viromedia/viro/tree/master/code-samples/js/ARCarDemo/res/logo.png) and adds a model of a car with the ability to change its colors.
-
-### [AR Driving Car Demo](https://github.com/viromedia/viro/tree/master/js/ARDrivingCarDemo)
-
-<a href="https://github.com/viromedia/viro/tree/master/js/ARDrivingCarDemo">
-<img src="https://raw.githubusercontent.com/viromedia/viro/master/code-samples/js/ARDrivingCarDemo/ARDrivingCarDemo.gif">
-</a>
-
-An ARScene that lets the user place a car on a surface and drive it around the world. See instructions in the project directory to enable the demo.
-
-### [AR Poster Demo](https://github.com/viromedia/viro/tree/master/code-samples/js/ARPosterDemo)
-
-<a href="https://github.com/viromedia/viro/tree/master/code-samples/js/ARPosterDemo">
-<img src="https://raw.githubusercontent.com/viromedia/viro/master/code-samples/js/ARPosterDemo/viro_black_panther_marker_demo.gif">
-</a>
-
-An ARScene that searches for this vertical [marker](https://github.com/viromedia/viro/tree/master/code-samples/js/ARPosterDemo/res/blackpanther.jpg) and renders Black Panther jumping out of the marker.
-
-### [AR Tracking Business Card Demo - iOS Only](https://github.com/viromedia/viro/tree/master/code-samples/js/ARBusinessCard)
-<a href="https://github.com/viromedia/viro/tree/master/code-samples/js/ARBusinessCard">
-<img src="https://github.com/vnovick/armonster-arkit2-businesscard/raw/master/business_card.gif">
-</a>
-
-An ARScene that tracks this [business card](https://github.com/viromedia/viro/blob/master/code-samples/js/ARBusinessCard/res/business_card.png) continously using image tracking.
-
-### [AR Full Sample App](https://github.com/viromedia/ViroARSampleApp)
-A complete React Native w/Viro AR Sample App. Demonstrates how to place, drag, and scale objects in the real world while providing 2D UI feedback.
-
-<a href="https://github.com/viromedia/ViroARSampleApp">
-<img src="https://raw.githubusercontent.com/viromedia/viro/master/code-samples/js/ViroARSampleApp/ar_sample_app.gif">
-</a>
-
-## Tutorials
-
-### [How to build an interactive AR app in 5 minutes](https://blog.viromedia.com/how-to-build-an-interactive-ar-app-in-5-mins-w-react-native-viro-ar-e420147e1612)
-
-<a href="https://blog.viromedia.com/how-to-build-an-interactive-ar-app-in-5-mins-w-react-native-viro-ar-e420147e1612">
-<img src="https://cdn-images-1.medium.com/max/1600/1*IwW479jvJFOwbZ7OgDJT3A.gif" />
-</a>
-
-### [How to build AR Portals in 5 minutes](https://blog.viromedia.com/how-to-build-ar-portals-in-5-mins-w-react-native-viro-ar-b939850def94)
-
-<a href="https://blog.viromedia.com/how-to-build-ar-portals-in-5-mins-w-react-native-viro-ar-b939850def94">
-<img src="https://cdn-images-1.medium.com/max/1600/1*YnWurSj2n-AtU26AvbXxVA.gif"/>
-</a>
-
-### [Add Snapchat-like AR Lenses to any app](https://blog.viromedia.com/add-snapchat-ar-lenses-to-any-app-w-react-native-viro-ar-9d4053769782)
-
-<a href="https://blog.viromedia.com/add-snapchat-ar-lenses-to-any-app-w-react-native-viro-ar-9d4053769782">
-<img src="https://cdn-images-1.medium.com/max/1600/1*iTkW2kiLIwOwJ5e_HHxI6Q.gif" />
-</a>
-
+MIT licensed. © ReactVision, Inc.
