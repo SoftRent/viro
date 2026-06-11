@@ -51,17 +51,17 @@ Figment/ios/Pods/
 Figment/ios/Podfile.lock
 Figment/ios/ngrokendpoint.txt
 
-
 # Node
 node_modules
 npm-debug.log
-yarn.lock
+package-lock.lock
 
 .DS_Store
 local.properties
 build/
-react-viro*.tgz
-
+*.tgz
+yarn.lock
+.env
 
 # Fastlane
 ios/fastlane/report.xml
@@ -72,3 +72,5 @@ test/ios/fastlane/report.xml
 test/ios/fastlane/README.md
 test/android/fastlane/README.md
 test/android/fastlane/report.xml
+/android/viro_bridge/.cxx/Debug
+/ios/dist/ViroRenderer/armv7_arm64
