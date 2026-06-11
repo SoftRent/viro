@@ -114,11 +114,15 @@ static NSArray<NSNumber *> *const kDefaultSize = @[@(0), @(0), @(0)];
 
 -(void)setDriver:(std::shared_ptr<VRODriver>)driver {
     [super setDriver:driver];
-    if (_soundRoomSet) {
-        self.driver->setSoundRoom([[_size objectAtIndex:0] floatValue],
-                                  [[_size objectAtIndex:1] floatValue],
-                                  [[_size objectAtIndex:2] floatValue],
-                                  [_wallMaterial UTF8String], [_ceilingMaterial UTF8String], [_floorMaterial UTF8String]);
+    if (_soundRoomSet && self.driver) {
+        @try {
+            self.driver->setSoundRoom([[_size objectAtIndex:0] floatValue],
+                                      [[_size objectAtIndex:1] floatValue],
+                                      [[_size objectAtIndex:2] floatValue],
+                                      [_wallMaterial UTF8String], [_ceilingMaterial UTF8String], [_floorMaterial UTF8String]);
+        } @catch (NSException *exception) {
+            NSLog(@"Error setting sound room: %@", exception.reason);
+        }
     }
 }
 
@@ -146,7 +150,16 @@ static NSArray<NSNumber *> *const kDefaultSize = @[@(0), @(0), @(0)];
     }
     
     if (self.driver) {
-        self.driver->setSoundRoom([[_size objectAtIndex:0] floatValue], [[_size objectAtIndex:1] floatValue], [[_size objectAtIndex:2] floatValue], [_wallMaterial UTF8String], [_ceilingMaterial UTF8String], [_floorMaterial UTF8String]);
+        @try {
+            self.driver->setSoundRoom([[_size objectAtIndex:0] floatValue], 
+                                     [[_size objectAtIndex:1] floatValue], 
+                                     [[_size objectAtIndex:2] floatValue], 
+                                     [_wallMaterial UTF8String], 
+                                     [_ceilingMaterial UTF8String], 
+                                     [_floorMaterial UTF8String]);
+        } @catch (NSException *exception) {
+            NSLog(@"Error setting sound room properties: %@", exception.reason);
+        }
     }
 }
 
@@ -266,36 +279,64 @@ static NSArray<NSNumber *> *const kDefaultSize = @[@(0), @(0), @(0)];
 }
 
 - (void)setPhysicsWorld:(NSDictionary *)dictionary{
-    std::shared_ptr<VROPhysicsWorld> physicsWorld = [self scene]->getPhysicsWorld();
-    NSArray *gravity = [dictionary objectForKey:@"gravity"];
-    if (gravity != nil){
-        if ([gravity count] !=3){
-            RCTLogError(@"Insufficient parameters provided for gravity, expected: [x, y, z]!");
-        } else {
-            VROVector3f gravity3f = VROVector3f([[gravity objectAtIndex:0] floatValue],
-                                                [[gravity objectAtIndex:1] floatValue],
-                                                [[gravity objectAtIndex:2] floatValue]);
-            physicsWorld->setGravity(gravity3f);
-        }
+    if (!self.scene) {
+        return;
     }
     
-    bool enabled = [[dictionary objectForKey:@"drawBounds"] boolValue];
-    physicsWorld->setDebugDrawVisible(enabled);
+    @try {
+        std::shared_ptr<VROPhysicsWorld> physicsWorld = [self scene]->getPhysicsWorld();
+        if (!physicsWorld) {
+            return;
+        }
+        
+        NSArray *gravity = [dictionary objectForKey:@"gravity"];
+        if (gravity != nil){
+            if ([gravity count] !=3){
+                RCTLogError(@"Insufficient parameters provided for gravity, expected: [x, y, z]!");
+            } else {
+                VROVector3f gravity3f = VROVector3f([[gravity objectAtIndex:0] floatValue],
+                                                    [[gravity objectAtIndex:1] floatValue],
+                                                    [[gravity objectAtIndex:2] floatValue]);
+                physicsWorld->setGravity(gravity3f);
+            }
+        }
+        
+        bool enabled = [[dictionary objectForKey:@"drawBounds"] boolValue];
+        physicsWorld->setDebugDrawVisible(enabled);
+    } @catch (NSException *exception) {
+        NSLog(@"Error setting physics world properties: %@", exception.reason);
+    }
 }
 
 - (void)setPostProcessEffects:(NSArray<NSString *> *)effects {
-    std::vector<std::string> strEffects;
-    for (int i = 0; i < [effects count]; i++) {
-        NSString *effect = [effects objectAtIndex:i];
-        std::string strEffect = std::string([effect UTF8String]);
-        strEffects.push_back(strEffect);
+    if (!self.scene) {
+        return;
     }
-    self.scene->setPostProcessingEffects(strEffects);
+    
+    @try {
+        std::vector<std::string> strEffects;
+        for (int i = 0; i < [effects count]; i++) {
+            NSString *effect = [effects objectAtIndex:i];
+            std::string strEffect = std::string([effect UTF8String]);
+            strEffects.push_back(strEffect);
+        }
+        self.scene->setPostProcessingEffects(strEffects);
+    } @catch (NSException *exception) {
+        NSLog(@"Error setting post process effects: %@", exception.reason);
+    }
 }
 
 - (void)setCanCameraTransformUpdate:(BOOL)canCameraTransformUpdate {
-    _canCameraTransformUpdate = canCameraTransformUpdate;
-    self.eventDelegate->setEnabledEvent(VROEventDelegate::EventAction::OnCameraTransformUpdate, canCameraTransformUpdate);
+    if (!self.eventDelegate) {
+        return;
+    }
+    
+    @try {
+        _canCameraTransformUpdate = canCameraTransformUpdate;
+        self.eventDelegate->setEnabledEvent(VROEventDelegate::EventAction::OnCameraTransformUpdate, canCameraTransformUpdate);
+    } @catch (NSException *exception) {
+        NSLog(@"Error setting camera transform update: %@", exception.reason);
+    }
 }
 
 /**
@@ -307,7 +348,7 @@ static NSArray<NSNumber *> *const kDefaultSize = @[@(0), @(0), @(0)];
     float r = sqrtf((pow(forwardVector.x, 2)) + (pow(forwardVector.y, 2))+ (pow(forwardVector.z, 2)));
     float theta = toDegrees(atan(forwardVector.z / forwardVector.x));
     float phi = toDegrees(acos(forwardVector.y / r));
-    
+
     /* Required offsets because of the Right Hand Rule used for our coordinate system for Theta.
      * Currently, in the XZ plane, the observed vector and theta angles in in the following format:
      *          (-z)
@@ -324,11 +365,34 @@ static NSArray<NSNumber *> *const kDefaultSize = @[@(0), @(0), @(0)];
     } else if (forwardVector.z < 0){
         theta = theta + 360;
     }
-    
+
     NSString *log = [NSString stringWithFormat:
                      @"\nCamera Polar Coordinates: Theta %f, Phi %f. \nCamera Forward Vector %f, %f, %f",
                      theta, phi, forwardVector.x, forwardVector.y, forwardVector.z];
     [VRTLog debug:log];
+}
+
+#pragma mark - Memory Management
+
+- (void)dealloc {
+    // Clear camera references
+    if (_camera && _vroView) {
+        [_vroView setPointOfView:nullptr];
+    }
+    _camera = nil;
+
+    // Clear scene controller delegate to prevent retain cycle
+    if (_sceneController && _delegate) {
+        _sceneController->setDelegate(nullptr);
+    }
+
+    // Clear C++ shared_ptr references
+    _delegate = nullptr;
+    _sceneController = nullptr;
+    _vroScene = nullptr;
+
+    // Clear view reference
+    _vroView = nil;
 }
 
 @end
