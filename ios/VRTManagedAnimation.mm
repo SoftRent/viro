@@ -154,22 +154,31 @@ enum class VRTAnimationState {
 }
 
 - (void)startAnimation {
+    [self startAnimationWithRetryCount:0];
+}
+
+- (void)startAnimationWithRetryCount:(int)retryCount {
     if (self.state != VRTAnimationState::Scheduled) {
-        NSLog(@"Aborted starting new animation, was no longer scheduled");
         self.state = VRTAnimationState::Terminated;
         return;
     }
-    
+
     std::shared_ptr<VRONode> node = self.node.lock();
     if (!node) {
-        NSLog(@"Aborted starting new animation, no target node specified");
         self.state = VRTAnimationState::Terminated;
         return;
     }
-    
+
     [self handleLoadAnimation];
     if (!self.executableAnimation) {
-        NSLog(@"Cannot start animation: no animation loaded!");
+        // Animation may not be registered yet (race condition with JS registration)
+        // Retry up to 10 times with a longer delay
+        if (retryCount < 10) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                [self startAnimationWithRetryCount:retryCount + 1];
+            });
+            return;
+        }
         self.state = VRTAnimationState::Terminated;
         return;
     }
