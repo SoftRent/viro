@@ -35,7 +35,8 @@
 @interface VRTAnimatedComponentAnimation : VRTManagedAnimation
 
 @property (readwrite, nonatomic) NSString *animationName;
-@property (readwrite, nonatomic) VRTAnimationManager *animationManager;
+@property (readwrite, nonatomic, weak) VRTAnimationManager *animationManager;
+@property (readwrite, nonatomic, weak) RCTBridge *bridge;
 
 - (std::shared_ptr<VROExecutableAnimation>)loadAnimation;
 
@@ -45,7 +46,23 @@
 
 - (std::shared_ptr<VROExecutableAnimation>)loadAnimation {
     if (self.animationName != nil) {
-        return [self.animationManager animationForName:self.animationName]->copy();
+        // Lazily fetch animation manager from bridge if not set
+        if (self.animationManager == nil && self.bridge != nil) {
+            // Use moduleForClass with NSClassFromString - works better with RCTBridgeProxy in new architecture
+            Class animManagerClass = NSClassFromString(@"VRTAnimationManager");
+            if (animManagerClass) {
+                self.animationManager = [self.bridge moduleForClass:animManagerClass];
+            }
+        }
+
+        if (self.animationManager == nil) {
+            return nullptr;
+        }
+        std::shared_ptr<VROExecutableAnimation> animation = [self.animationManager animationForName:self.animationName];
+        if (animation) {
+            return animation->copy();
+        }
+        return nullptr;
     }
     else {
         return nullptr;
@@ -75,15 +92,28 @@
     self = [super initWithBridge:bridge];
     if (self) {
         self.managedAnimation = [[VRTAnimatedComponentAnimation alloc] init];
-        self.managedAnimation.animationManager = [self.bridge animationManager];
-        self.animationManager = [self.bridge animationManager];
+        self.managedAnimation.bridge = bridge;  // Store bridge for lazy animation manager lookup
+        // Use moduleForClass with NSClassFromString - works better with RCTBridgeProxy in new architecture
+        Class animManagerClass = NSClassFromString(@"VRTAnimationManager");
+        if (animManagerClass) {
+            self.managedAnimation.animationManager = [bridge moduleForClass:animManagerClass];
+            self.animationManager = [bridge moduleForClass:animManagerClass];
+        }
         self.viewAdded = false;
     }
     return self;
 }
 
 - (void)dealloc {
-    
+    // Clear the managed animation to prevent retain cycles
+    if (self.managedAnimation) {
+        // Clear the node reference to break potential retain cycles
+        self.managedAnimation.node = std::weak_ptr<VRONode>();
+        // Clear references to break any potential retain cycles
+        self.managedAnimation.animationManager = nil;
+        self.managedAnimation.bridge = nil;
+        self.managedAnimation = nil;
+    }
 }
 
 #pragma mark - VRTView overrides
@@ -116,7 +146,7 @@
                 break;
             }
         }
-        if (!childFound) {
+        if (!childFound && self.vroSubview.node) {
             supernodeView.node->addChildNode(self.vroSubview.node);
         }
     }
