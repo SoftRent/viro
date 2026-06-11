@@ -55,13 +55,24 @@ const double kTransformDelegateDistanceFilter = 0.01;
 
 - (std::shared_ptr<VROExecutableAnimation>)loadAnimation {
     if (self.animationName != nil) {
+        // Lazily fetch animation manager from bridge if not set
+        if (self.animationManager == nil && self.bridge != nil) {
+            // Use moduleForClass with NSClassFromString - works better with RCTBridgeProxy in new architecture
+            Class animManagerClass = NSClassFromString(@"VRTAnimationManager");
+            if (animManagerClass) {
+                self.animationManager = [self.bridge moduleForClass:animManagerClass];
+            }
+            // Animation manager loaded lazily from bridge
+        }
+
+        if (self.animationManager == nil) {
+            return nullptr;
+        }
         std::shared_ptr<VROExecutableAnimation> animation = [self.animationManager animationForName:self.animationName];
         if (animation) {
             return animation->copy();
         }
-        else {
-            return nullptr;
-        }
+        return nullptr;
     }
     else {
         return nullptr;
@@ -76,7 +87,53 @@ const double kTransformDelegateDistanceFilter = 0.01;
 
 #pragma mark - Node Class
 
+@interface VRTNode () {
+    // Store original embedded materials from GLB before any shader overrides
+    // This allows us to always start from the true baseline when switching shaders
+    std::vector<std::shared_ptr<VROMaterial>> _originalEmbeddedMaterials;
+    // Store original materials for child nodes (used by applyShaderOverridesRecursive:)
+    // Maps node pointer to its original materials vector
+    std::unordered_map<VRONode*, std::vector<std::shared_ptr<VROMaterial>>> _childNodeOriginalMaterials;
+    // Store original embedded materials for child nodes used by applyMaterialsRecursive:
+    // Kept separate from _childNodeOriginalMaterials to avoid interference with shader overrides
+    std::unordered_map<VRONode*, std::vector<std::shared_ptr<VROMaterial>>> _childNodeMaterialMergeOriginals;
+}
+// Track shader override materials and their clones for uniform updates
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSMutableArray *> *shaderOverrideMap;
+// Track regular materials with shader modifiers for uniform propagation
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSMutableArray *> *shaderMaterialsMap;
+@end
+
+// Static registry to track all nodes with shader overrides (weak references)
+static NSHashTable *shaderOverrideNodesRegistry = nil;
+// Static registry to track all nodes with shader materials (weak references)
+static NSHashTable *shaderMaterialsNodesRegistry = nil;
+
 @implementation VRTNode
+
++ (void)initialize {
+    if (self == [VRTNode class]) {
+        // NSHashTable with weak references
+        shaderOverrideNodesRegistry = [NSHashTable weakObjectsHashTable];
+        shaderMaterialsNodesRegistry = [NSHashTable weakObjectsHashTable];
+    }
+}
+
++ (void)updateShaderOverridesForMaterial:(NSString *)materialName {
+    // Iterate through all registered nodes and update those using this material
+    for (VRTNode *node in shaderOverrideNodesRegistry) {
+        if (node.shaderOverrideMap[materialName]) {
+            [node updateShaderOverrideUniformsForMaterial:materialName];
+        }
+    }
+
+    // Also update nodes using this material via the materials prop
+    for (VRTNode *node in shaderMaterialsNodesRegistry) {
+        if (node.shaderMaterialsMap[materialName]) {
+            [node updateShaderMaterialUniformsForMaterial:materialName];
+        }
+    }
+}
 
 - (instancetype)initWithBridge:(RCTBridge *)bridge  {
     self = [super initWithBridge:bridge];
@@ -88,13 +145,21 @@ const double kTransformDelegateDistanceFilter = 0.01;
         _visible = YES; // default to visible.
         _opacity = 1.0; //default opacity to 1.0
         _highAccuracyEvents = NO;
+        _shaderOverrideMap = [[NSMutableDictionary alloc] init];
+        _shaderMaterialsMap = [[NSMutableDictionary alloc] init];
         _lightReceivingBitMask = 1;
         _shadowCastingBitMask = 1;
         _shouldIgnoreEventHandling = NO; // default is NO
         _ignoreEventHandling = NO; // default is NO
         
         _nodeAnimation = [[VRTNodeAnimation alloc] init];
-        _nodeAnimation.animationManager = [bridge animationManager];
+        _nodeAnimation.bridge = bridge;  // Store bridge for lazy animation manager lookup
+        // Use moduleForClass with NSClassFromString - works better with RCTBridgeProxy in new architecture
+        Class animManagerClass = NSClassFromString(@"VRTAnimationManager");
+        if (animManagerClass) {
+            _nodeAnimation.animationManager = [bridge moduleForClass:animManagerClass];
+        }
+        // If animMgr is nil, loadAnimation will try to fetch it lazily from bridge
         _nodeAnimation.node = _node;
         
         // Create and attach event delegate
@@ -118,12 +183,16 @@ const double kTransformDelegateDistanceFilter = 0.01;
         self.node->addLight([light light]);
     } else if ([child isKindOfClass:[VRTCamera class]]) {
         VRTCamera *cameraView = (VRTCamera *)child;
-        self.node->addChildNode(cameraView.nodeRootTransformCamera);
+        if (cameraView.nodeRootTransformCamera) {
+            self.node->addChildNode(cameraView.nodeRootTransformCamera);
+        }
     } else if ([child isKindOfClass:[VRTPortal class]]) {
         // Ignore, this is only handled by VRTPortal
     } else if ([child isKindOfClass:[VRTNode class]]) {
         VRTNode *nodeView = (VRTNode *)child;
-        self.node->addChildNode(nodeView.node);
+        if (nodeView.node) {
+            self.node->addChildNode(nodeView.node);
+        }
     } else if ([child isKindOfClass:[VRTAnimatedComponent class]]) {
         /*
          Add all children (the targets of the animation) to the node.
@@ -146,7 +215,7 @@ const double kTransformDelegateDistanceFilter = 0.01;
                 }
             }
             
-            if(!childFound){
+            if(!childFound && subsubNodeView.node){
                 self.node->addChildNode(subsubNodeView.node);
             }
         }
@@ -171,13 +240,19 @@ const double kTransformDelegateDistanceFilter = 0.01;
     }
     else if([vroView isKindOfClass:[VRT360Image class]]) {
         VRTNode *nodeView = (VRTNode *)vroView;
-        nodeView.node->getParentPortal()->removeBackground();
-        nodeView.node->removeFromParentNode();
+        if (nodeView.node && nodeView.node->getParentPortal()) {
+            nodeView.node->getParentPortal()->removeBackground();
+        }
+        if (nodeView.node) {
+            nodeView.node->removeFromParentNode();
+        }
     }
     else if ([vroView isKindOfClass:[VRTNode class]]) {
         VRTNode *nodeView = (VRTNode *)vroView;
         [nodeView clearPhysicsBody];
-        nodeView.node->removeFromParentNode();
+        if (nodeView.node) {
+            nodeView.node->removeFromParentNode();
+        }
     }
     
     else if ([vroView isKindOfClass:[VRTAnimatedComponent class]]) {
@@ -190,7 +265,9 @@ const double kTransformDelegateDistanceFilter = 0.01;
             }
             
             VRTNode *subsubNodeView = (VRTNode *)subsubview;
-            subsubNodeView.node->removeFromParentNode();
+            if (subsubNodeView.node) {
+                subsubNodeView.node->removeFromParentNode();
+            }
         }
     }
     
@@ -216,21 +293,45 @@ const double kTransformDelegateDistanceFilter = 0.01;
 }
 
 - (void)setRenderingOrder:(int)renderingOrder {
-    _renderingOrder = renderingOrder;
-    [self node]->setRenderingOrder(renderingOrder);
+    if (!self.node) {
+        return;
+    }
+    
+    @try {
+        _renderingOrder = renderingOrder;
+        [self node]->setRenderingOrder(renderingOrder);
+    } @catch (NSException *exception) {
+        NSLog(@"Error updating renderingOrder property: %@", exception.reason);
+    }
 }
 
 - (void)setVisible:(BOOL)visible {
-    _visible = visible;
-    [self handleAppearanceChange];
+    if (!self.node) {
+        return;
+    }
+    
+    @try {
+        _visible = visible;
+        [self handleAppearanceChange];
+    } @catch (NSException *exception) {
+        NSLog(@"Error updating visible property: %@", exception.reason);
+    }
 }
 
 - (void)setViroTag:(NSString *)tag {
-    std::string nodeTag;
-    if (tag) {
-        nodeTag = std::string([tag UTF8String]);
+    if (!self.node) {
+        return;
     }
-    [self node]->setTag(nodeTag);
+    
+    @try {
+        std::string nodeTag;
+        if (tag) {
+            nodeTag = std::string([tag UTF8String]);
+        }
+        [self node]->setTag(nodeTag);
+    } @catch (NSException *exception) {
+        NSLog(@"Error updating viroTag property: %@", exception.reason);
+    }
 }
 
 - (void)setContext:(VRORenderContext *)context {
@@ -267,10 +368,18 @@ const double kTransformDelegateDistanceFilter = 0.01;
 #pragma mark - Transforms
 
 - (void)setPosition:(NSArray<NSNumber *> *)position {
-    _position = [position copy];
-    float positionValues[3];
-    populateFloatArrayFromNSArray(position, positionValues, 3);
-    [self node]->setPosition({positionValues[0], positionValues[1], positionValues[2]});
+    if (!self.node) {
+        return;
+    }
+    
+    @try {
+        _position = [position copy];
+        float positionValues[3];
+        populateFloatArrayFromNSArray(position, positionValues, 3);
+        [self node]->setPosition({positionValues[0], positionValues[1], positionValues[2]});
+    } @catch (NSException *exception) {
+        NSLog(@"Error updating position property: %@", exception.reason);
+    }
 }
 
 -(void)setHasTransformDelegate:(BOOL)hasDelegate {
@@ -295,56 +404,104 @@ const double kTransformDelegateDistanceFilter = 0.01;
 }
 
 - (void)setOpacity:(float)opacity {
-    _opacity = opacity;
-    [self node]->setOpacity(_opacity);
+    if (!self.node) {
+        return;
+    }
+    
+    @try {
+        _opacity = opacity;
+        [self node]->setOpacity(_opacity);
+    } @catch (NSException *exception) {
+        NSLog(@"Error updating opacity property: %@", exception.reason);
+    }
 }
 
 - (void)setRotation:(NSArray<NSNumber *> *)rotation {
-    _rotation = [rotation copy];
-    float rotationValues[3];
-    populateFloatArrayFromNSArray(rotation, rotationValues, 3);
-    [self node]->setRotation({toRadians(rotationValues[0]), toRadians(rotationValues[1]), toRadians(rotationValues[2])});
+    if (!self.node) {
+        return;
+    }
+    
+    @try {
+        _rotation = [rotation copy];
+        float rotationValues[3];
+        populateFloatArrayFromNSArray(rotation, rotationValues, 3);
+        [self node]->setRotation({toRadians(rotationValues[0]), toRadians(rotationValues[1]), toRadians(rotationValues[2])});
+    } @catch (NSException *exception) {
+        NSLog(@"Error updating rotation property: %@", exception.reason);
+    }
 }
 
 - (void)setScale:(NSArray<NSNumber *> *)scale {
-    _scale = [scale copy];
-    float scaleValues[3];
-    populateFloatArrayFromNSArray(scale, scaleValues, 3);
-    [self node]->setScale({scaleValues[0], scaleValues[1], scaleValues[2]});
+    if (!self.node) {
+        return;
+    }
+    
+    @try {
+        _scale = [scale copy];
+        float scaleValues[3];
+        populateFloatArrayFromNSArray(scale, scaleValues, 3);
+        [self node]->setScale({scaleValues[0], scaleValues[1], scaleValues[2]});
+    } @catch (NSException *exception) {
+        NSLog(@"Error updating scale property: %@", exception.reason);
+    }
 }
 
 - (void)setRotationPivot:(NSArray<NSNumber *> *)pivot {
-    _rotationPivot = [pivot copy];
-    float pivotValues[3];
-    populateFloatArrayFromNSArray(pivot, pivotValues, 3);
+    if (!self.node) {
+        return;
+    }
     
-    VROMatrix4f pivotMatrix;
-    pivotMatrix.translate(pivotValues[0], pivotValues[1], pivotValues[2]);
-    [self node]->setRotationPivot(pivotMatrix);
+    @try {
+        _rotationPivot = [pivot copy];
+        float pivotValues[3];
+        populateFloatArrayFromNSArray(pivot, pivotValues, 3);
+        
+        VROMatrix4f pivotMatrix;
+        pivotMatrix.translate(pivotValues[0], pivotValues[1], pivotValues[2]);
+        [self node]->setRotationPivot(pivotMatrix);
+    } @catch (NSException *exception) {
+        NSLog(@"Error updating rotationPivot property: %@", exception.reason);
+    }
 }
 
 - (void)setScalePivot:(NSArray<NSNumber *> *)pivot {
-    _scalePivot = [pivot copy];
-    float pivotValues[3];
-    populateFloatArrayFromNSArray(pivot, pivotValues, 3);
+    if (!self.node) {
+        return;
+    }
     
-    VROMatrix4f pivotMatrix;
-    pivotMatrix.translate(pivotValues[0], pivotValues[1], pivotValues[2]);
-    [self node]->setScalePivot(pivotMatrix);
+    @try {
+        _scalePivot = [pivot copy];
+        float pivotValues[3];
+        populateFloatArrayFromNSArray(pivot, pivotValues, 3);
+        
+        VROMatrix4f pivotMatrix;
+        pivotMatrix.translate(pivotValues[0], pivotValues[1], pivotValues[2]);
+        [self node]->setScalePivot(pivotMatrix);
+    } @catch (NSException *exception) {
+        NSLog(@"Error updating scalePivot property: %@", exception.reason);
+    }
 }
 
 - (void)setTransformBehaviors:(NSArray<NSString *> *)behaviors {
-    [self node]->removeAllConstraints();
-    for (NSString *behavior in behaviors) {
-        if ([behavior caseInsensitiveCompare:@"billboard"] == NSOrderedSame) {
-            [self node]->addConstraint(std::make_shared<VROBillboardConstraint>(VROBillboardAxis::All));
+    if (!self.node) {
+        return;
+    }
+    
+    @try {
+        [self node]->removeAllConstraints();
+        for (NSString *behavior in behaviors) {
+            if ([behavior caseInsensitiveCompare:@"billboard"] == NSOrderedSame) {
+                [self node]->addConstraint(std::make_shared<VROBillboardConstraint>(VROBillboardAxis::All));
+            }
+            if ([behavior caseInsensitiveCompare:@"billboardX"] == NSOrderedSame) {
+                [self node]->addConstraint(std::make_shared<VROBillboardConstraint>(VROBillboardAxis::X));
+            }
+            if ([behavior caseInsensitiveCompare:@"billboardY"] == NSOrderedSame) {
+                [self node]->addConstraint(std::make_shared<VROBillboardConstraint>(VROBillboardAxis::Y));
+            }
         }
-        if ([behavior caseInsensitiveCompare:@"billboardX"] == NSOrderedSame) {
-            [self node]->addConstraint(std::make_shared<VROBillboardConstraint>(VROBillboardAxis::X));
-        }
-        if ([behavior caseInsensitiveCompare:@"billboardY"] == NSOrderedSame) {
-            [self node]->addConstraint(std::make_shared<VROBillboardConstraint>(VROBillboardAxis::Y));
-        }
+    } @catch (NSException *exception) {
+        NSLog(@"Error updating transformBehaviors property: %@", exception.reason);
     }
 }
 
@@ -354,45 +511,639 @@ const double kTransformDelegateDistanceFilter = 0.01;
     [self applyMaterials];
 }
 
+- (void)setMaterialUniforms:(NSDictionary *)uniforms {
+    _materialUniforms = uniforms;
+    std::shared_ptr<VROGeometry> geometry = [self node]->getGeometry();
+    if (!geometry || geometry->getMaterials().empty()) {
+        return;
+    }
+
+    // For now apply to the first material. Ideally we'd have a way to specify which material.
+    std::shared_ptr<VROMaterial> material = geometry->getMaterials()[0];
+
+    for (NSString *name in uniforms) {
+        id value = uniforms[name];
+        if ([value isKindOfClass:[NSNumber class]]) {
+            material->setShaderUniform(std::string([name UTF8String]), [value floatValue]);
+        } else if ([value isKindOfClass:[NSArray class]]) {
+            NSArray *arr = (NSArray *)value;
+            if (arr.count == 3) {
+                material->setShaderUniform(std::string([name UTF8String]), VROVector3f([arr[0] floatValue], [arr[1] floatValue], [arr[2] floatValue]));
+            } else if (arr.count == 4) {
+                material->setShaderUniform(std::string([name UTF8String]), VROVector4f([arr[0] floatValue], [arr[1] floatValue], [arr[2] floatValue], [arr[3] floatValue]));
+            }
+        }
+    }
+}
+
+- (void)setShaderModifiers:(NSDictionary *)modifiers {
+    _shaderModifiers = modifiers;
+    std::shared_ptr<VROGeometry> geometry = [self node]->getGeometry();
+    if (!geometry || geometry->getMaterials().empty()) {
+        return;
+    }
+
+    std::shared_ptr<VROMaterial> material = geometry->getMaterials()[0];
+    // NOTE: Commenting out to preserve system modifiers (e.g., skinning)
+    // material->removeAllShaderModifiers();
+
+    for (id entryPointKey in modifiers) {
+        NSString *entryPointName = (NSString *)entryPointKey;
+        id modifierValue = modifiers[entryPointKey];
+
+        // Handle both string and dictionary formats
+        NSString *modifierCode;
+        if ([modifierValue isKindOfClass:[NSString class]]) {
+            modifierCode = (NSString *)modifierValue;
+        } else if ([modifierValue isKindOfClass:[NSDictionary class]]) {
+            NSDictionary *modifierDict = (NSDictionary *)modifierValue;
+            NSString *uniforms = modifierDict[@"uniforms"];
+            NSString *body = modifierDict[@"body"];
+            if (uniforms && uniforms.length > 0) {
+                modifierCode = [NSString stringWithFormat:@"%@\n%@", uniforms, body ? body : @""];
+            } else {
+                modifierCode = body;
+            }
+
+            if (!modifierCode) {
+                RCTLogError(@"Shader modifier dictionary must contain 'body' or 'uniforms' key");
+                continue;
+            }
+        } else {
+            RCTLogError(@"Shader modifier must be string or dictionary with 'body' key");
+            continue;
+        }
+
+        VROShaderEntryPoint entryPoint = [self convertEntryPoint:entryPointName];
+        NSArray *lines = [modifierCode componentsSeparatedByString:@"\n"];
+        std::vector<std::string> linesVec;
+        for (NSString *line in lines) {
+            linesVec.push_back(std::string([line UTF8String]));
+        }
+
+        auto modifier = std::make_shared<VROShaderModifier>(entryPoint, linesVec);
+        material->addShaderModifier(modifier);
+    }
+
+    // Force geometry substrate to reset - critical for geometry shaders that modify vertex data
+    geometry->updateSubstrate();
+}
+
+- (VROShaderEntryPoint)convertEntryPoint:(NSString *)name {
+    if ([@"geometry" caseInsensitiveCompare:name] == NSOrderedSame) {
+        return VROShaderEntryPoint::Geometry;
+    } else if ([@"vertex" caseInsensitiveCompare:name] == NSOrderedSame) {
+        return VROShaderEntryPoint::Vertex;
+    } else if ([@"surface" caseInsensitiveCompare:name] == NSOrderedSame) {
+        return VROShaderEntryPoint::Surface;
+    } else if ([@"fragment" caseInsensitiveCompare:name] == NSOrderedSame) {
+        return VROShaderEntryPoint::Fragment;
+    } else if ([@"lightingModel" caseInsensitiveCompare:name] == NSOrderedSame) {
+        return VROShaderEntryPoint::LightingModel;
+    }
+    return VROShaderEntryPoint::Fragment;
+}
+
 // Apply materials to the underlying geometry if materials were explicitly set
 // via the materials prop
 - (void)applyMaterials {
+    [self applyMaterialsRecursive:NO];
+}
+
+// Apply materials recursively to all child nodes in the hierarchy.
+// Used for 3D models (Viro3DObject) that have nested geometries.
+- (void)applyMaterialsRecursive:(BOOL)recursive {
     if (!self.node) {
         return;
     }
-    
+
+    // Clear existing shader material tracking for this node
+    [self.shaderMaterialsMap removeAllObjects];
+
     std::shared_ptr<VROGeometry> geometry = self.node->getGeometry();
-    if (!geometry) {
+    if (geometry) {
+        if (!self.materials) {
+            // If materials were removed from object, then reset the materials array.
+            // This ensures a clean slate when materials are cleared
+            std::vector<std::shared_ptr<VROMaterial>> tempMaterials;
+            tempMaterials.push_back(std::make_shared<VROMaterial>());
+            geometry->setMaterials(tempMaterials);
+
+            // Remove from tracking registry since no shader materials
+            [shaderMaterialsNodesRegistry removeObject:self];
+        } else {
+            VRTMaterialManager *materialManager = [self.bridge moduleForClass:[VRTMaterialManager class]];
+
+            std::vector<std::shared_ptr<VROMaterial>> tempMaterials;
+            BOOL hasShaderMaterials = NO;
+
+            for (int i = 0; i < self.materials.count; i++) {
+                NSString *materialName = [self.materials objectAtIndex:i];
+
+                std::shared_ptr<VROMaterial> sourceMaterial = [materialManager getMaterialByName:materialName];
+                if (sourceMaterial == NULL) {
+                    RCTLogError(@"Unknown Material Name: \"%@\"", materialName);
+                    return;
+                }
+
+                // ALWAYS copy materials to prevent state persistence bugs
+                // This ensures each object has its own independent material instance
+                std::shared_ptr<VROMaterial> materialCopy = std::make_shared<VROMaterial>(sourceMaterial);
+
+                // Track materials with shader modifiers for uniform propagation
+                if (sourceMaterial->getShaderModifiers().size() > 0) {
+                    hasShaderMaterials = YES;
+
+                    // Track this cloned material for uniform updates
+                    NSMutableArray *clonedMaterialsArray = self.shaderMaterialsMap[materialName];
+                    if (!clonedMaterialsArray) {
+                        clonedMaterialsArray = [[NSMutableArray alloc] init];
+                        self.shaderMaterialsMap[materialName] = clonedMaterialsArray;
+                    } else {
+                        // CRITICAL: Clear array from previous runs to prevent accumulation
+                        [clonedMaterialsArray removeAllObjects];
+                    }
+
+                    // Store raw pointer (material is owned by geometry)
+                    [clonedMaterialsArray addObject:[NSValue valueWithPointer:materialCopy.get()]];
+                }
+
+                tempMaterials.push_back(materialCopy);
+            }
+            geometry->setMaterials(tempMaterials);
+
+            // Force geometry substrate to reset when materials change
+            // This is critical for geometry shaders that modify vertex data
+            geometry->updateSubstrate();
+
+            // Register this node if it has shader materials for uniform propagation
+            if (hasShaderMaterials) {
+                [shaderMaterialsNodesRegistry addObject:self];
+            } else {
+                [shaderMaterialsNodesRegistry removeObject:self];
+            }
+        }
+    }
+
+    [self updateVideoTextures];
+
+    // Recursively merge material rendering properties onto child node embedded materials.
+    // This preserves embedded textures and skinning modifiers while applying user-specified
+    // rendering settings (lighting model, bloom, blend mode, etc.) from the first override material.
+    if (recursive && self.materials && self.materials.count > 0) {
+        VRTMaterialManager *materialManager = [self.bridge moduleForClass:[VRTMaterialManager class]];
+        NSString *firstMaterialName = self.materials[0];
+        std::shared_ptr<VROMaterial> overrideMaterial = [materialManager getMaterialByName:firstMaterialName];
+
+        if (overrideMaterial) {
+            std::function<void(std::shared_ptr<VRONode>)> applyToChildren = [&](std::shared_ptr<VRONode> node) {
+                for (std::shared_ptr<VRONode> child : node->getChildNodes()) {
+                    std::shared_ptr<VROGeometry> childGeometry = child->getGeometry();
+                    if (childGeometry) {
+                        VRONode *childPtr = child.get();
+                        std::vector<std::shared_ptr<VROMaterial>> childOriginalMaterials;
+
+                        // Save original embedded materials on first call; use stored ones thereafter
+                        if (_childNodeMaterialMergeOriginals.find(childPtr) == _childNodeMaterialMergeOriginals.end()) {
+                            childOriginalMaterials = childGeometry->getMaterials();
+                            if (!childOriginalMaterials.empty()) {
+                                _childNodeMaterialMergeOriginals[childPtr] = childOriginalMaterials;
+                            }
+                        } else {
+                            childOriginalMaterials = _childNodeMaterialMergeOriginals[childPtr];
+                        }
+
+                        if (!childOriginalMaterials.empty()) {
+                            std::vector<std::shared_ptr<VROMaterial>> mergedChildMaterials;
+                            for (const auto &originalMat : childOriginalMaterials) {
+                                // Copy embedded material — preserves textures and skinning modifiers
+                                std::shared_ptr<VROMaterial> mergedMat = std::make_shared<VROMaterial>(originalMat);
+
+                                // Apply rendering properties from the user override only (NOT colors/textures)
+                                mergedMat->setLightingModel(overrideMaterial->getLightingModel());
+                                mergedMat->setBloomThreshold(overrideMaterial->getBloomThreshold());
+                                mergedMat->setShininess(overrideMaterial->getShininess());
+                                mergedMat->setBlendMode(overrideMaterial->getBlendMode());
+                                mergedMat->setTransparencyMode(overrideMaterial->getTransparencyMode());
+                                mergedMat->setCullMode(overrideMaterial->getCullMode());
+                                mergedMat->setWritesToDepthBuffer(overrideMaterial->getWritesToDepthBuffer());
+                                mergedMat->setReadsFromDepthBuffer(overrideMaterial->getReadsFromDepthBuffer());
+
+                                // Propagate shader modifiers (e.g. semantic mask, custom effects)
+                                for (const auto &modifier : overrideMaterial->getShaderModifiers()) {
+                                    if (!mergedMat->hasShaderModifier(modifier)) {
+                                        mergedMat->addShaderModifier(modifier);
+                                    }
+                                }
+
+                                mergedChildMaterials.push_back(mergedMat);
+                            }
+                            childGeometry->setMaterials(mergedChildMaterials);
+                            childGeometry->updateSubstrate();
+                        }
+                    }
+                    // Recurse to grandchildren
+                    applyToChildren(child);
+                }
+            };
+
+            applyToChildren(self.node);
+        }
+    }
+}
+
+- (void)setShaderOverrides:(NSArray<NSString *> *)shaderOverrides {
+    _shaderOverrides = shaderOverrides;
+
+    // If clearing shader overrides, unregister from global registry
+    if (!shaderOverrides || shaderOverrides.count == 0) {
+        [shaderOverrideNodesRegistry removeObject:self];
+        [self.shaderOverrideMap removeAllObjects];
+
+        // Restore original embedded materials when removing all shader overrides
+        if (!_originalEmbeddedMaterials.empty() && self.node) {
+            std::shared_ptr<VROGeometry> geometry = self.node->getGeometry();
+            if (geometry) {
+                geometry->setMaterials(_originalEmbeddedMaterials);
+                geometry->updateSubstrate();
+            }
+            // Clear stored materials
+            _originalEmbeddedMaterials.clear();
+        }
+
+        // Restore original materials for all child nodes
+        if (!_childNodeOriginalMaterials.empty() && self.node) {
+            [self restoreChildNodeMaterials:self.node];
+            _childNodeOriginalMaterials.clear();
+        }
+    } else {
+        [self applyShaderOverrides];
+    }
+}
+
+- (void)applyShaderOverrides {
+    // Don't apply shader overrides if node doesn't exist yet
+    // The model loading callback will apply them after the model loads
+    if (!self.node) {
         return;
     }
-    
-    if (!self.materials) {
-        // If materials were removed from object, then reset the materials array.
-        std::vector<std::shared_ptr<VROMaterial>> tempMaterials;
-        tempMaterials.push_back(std::make_shared<VROMaterial>());
-        geometry->setMaterials(tempMaterials);
+
+    // CRITICAL: Use recursive=YES because GLB/VRX models have geometry on child nodes
+    // Without this, shader changes only affect root node (which has no geometry)
+    [self applyShaderOverridesRecursive:YES];
+}
+
+// Update uniforms on cloned materials from shader override source materials
+- (void)updateShaderOverrideUniforms {
+    for (NSString *shaderMaterialName in self.shaderOverrideMap) {
+        [self updateShaderOverrideUniformsForMaterial:shaderMaterialName];
+    }
+}
+
+// Update uniforms for a specific shader override material
+- (void)updateShaderOverrideUniformsForMaterial:(NSString *)materialName {
+    if (!self.shaderOverrideMap || !self.shaderOverrideMap[materialName]) {
         return;
     }
-    
+
     VRTMaterialManager *materialManager = [self.bridge moduleForClass:[VRTMaterialManager class]];
-    
-    std::vector<std::shared_ptr<VROMaterial>> tempMaterials;
-    for (int i = 0; i < self.materials.count; i++) {
-        NSString *materialName = [self.materials objectAtIndex:i];
-        
-        std::shared_ptr<VROMaterial> material = [materialManager getMaterialByName:materialName];
-        if (material == NULL) {
-            RCTLogError(@"Unknown Material Name: \"%@\"", materialName);
+    std::shared_ptr<VROMaterial> shaderMaterial = [materialManager getMaterialByName:materialName];
+    if (!shaderMaterial) {
+        return;
+    }
+
+    NSArray *clonedMaterialsArray = self.shaderOverrideMap[materialName];
+
+    for (NSValue *materialPtr in clonedMaterialsArray) {
+        VROMaterial *clonedMaterial = (VROMaterial *)[materialPtr pointerValue];
+
+        // Update all uniform types from source material to cloned material
+        for (const auto &uniform : shaderMaterial->getShaderUniformFloats()) {
+            clonedMaterial->setShaderUniform(uniform.first, uniform.second);
+        }
+        for (const auto &uniform : shaderMaterial->getShaderUniformVec3s()) {
+            clonedMaterial->setShaderUniform(uniform.first, uniform.second);
+        }
+        for (const auto &uniform : shaderMaterial->getShaderUniformVec4s()) {
+            clonedMaterial->setShaderUniform(uniform.first, uniform.second);
+        }
+        for (const auto &uniform : shaderMaterial->getShaderUniformMat4s()) {
+            clonedMaterial->setShaderUniform(uniform.first, uniform.second);
+        }
+    }
+}
+
+// Update uniforms for materials applied via the materials prop (not shaderOverrides)
+- (void)updateShaderMaterialUniformsForMaterial:(NSString *)materialName {
+    if (!self.shaderMaterialsMap || !self.shaderMaterialsMap[materialName]) {
+        return;
+    }
+
+    VRTMaterialManager *materialManager = [self.bridge moduleForClass:[VRTMaterialManager class]];
+    std::shared_ptr<VROMaterial> sourceMaterial = [materialManager getMaterialByName:materialName];
+    if (!sourceMaterial) {
+        return;
+    }
+
+    NSArray *clonedMaterialsArray = self.shaderMaterialsMap[materialName];
+
+    for (NSValue *materialPtr in clonedMaterialsArray) {
+        VROMaterial *clonedMaterial = (VROMaterial *)[materialPtr pointerValue];
+
+        // Update all uniform types from source material to cloned material
+        for (const auto &uniform : sourceMaterial->getShaderUniformFloats()) {
+            clonedMaterial->setShaderUniform(uniform.first, uniform.second);
+        }
+        for (const auto &uniform : sourceMaterial->getShaderUniformVec3s()) {
+            clonedMaterial->setShaderUniform(uniform.first, uniform.second);
+        }
+        for (const auto &uniform : sourceMaterial->getShaderUniformVec4s()) {
+            clonedMaterial->setShaderUniform(uniform.first, uniform.second);
+        }
+        for (const auto &uniform : sourceMaterial->getShaderUniformMat4s()) {
+            clonedMaterial->setShaderUniform(uniform.first, uniform.second);
+        }
+    }
+}
+
+// Apply shader modifiers to existing materials without replacing textures.
+// Clones the geometry's current materials and merges shader modifiers from the override materials.
+- (void)applyShaderOverridesRecursive:(BOOL)recursive {
+    if (!self.node || !self.shaderOverrides) {
+        return;
+    }
+
+    // Clear existing tracking
+    [self.shaderOverrideMap removeAllObjects];
+
+    std::shared_ptr<VROGeometry> geometry = self.node->getGeometry();
+
+    // For 3D models (GLB/FBX/VRX), geometry is often on child nodes, not the root
+    // So we need to proceed with recursive application even if root has no geometry
+    if (geometry) {
+        // Get materials from geometry
+        std::vector<std::shared_ptr<VROMaterial>> currentMaterials = geometry->getMaterials();
+
+        // Check if we have materials to work with
+        if (currentMaterials.empty()) {
+            // Model hasn't loaded yet or has no materials, skip for now
             return;
         }
-        
-        // Always copy materials from the material manager, as they may be
-        // modified by animations, etc. and we don't want these changes to
-        // propagate to the reference material held by the material manager
-        tempMaterials.push_back(std::make_shared<VROMaterial>(material));
+
+        // Store original embedded materials on first call (only if non-empty!)
+        // For VRX/FBX with async textures, we'll update this when textures finish loading
+        if (_originalEmbeddedMaterials.empty()) {
+            _originalEmbeddedMaterials = currentMaterials;
+        } else {
+            // Check if we should UPDATE stored materials (for VRX with async textures)
+            // If current materials have textures but stored ones don't, update
+            bool currentHasTextures = false;
+            bool storedHasTextures = false;
+
+            for (const auto &mat : currentMaterials) {
+                if (mat->getDiffuse().getTexture() != nullptr ||
+                    mat->getRoughness().getTexture() != nullptr ||
+                    mat->getMetalness().getTexture() != nullptr) {
+                    currentHasTextures = true;
+                    break;
+                }
+            }
+
+            for (const auto &mat : _originalEmbeddedMaterials) {
+                if (mat->getDiffuse().getTexture() != nullptr ||
+                    mat->getRoughness().getTexture() != nullptr ||
+                    mat->getMetalness().getTexture() != nullptr) {
+                    storedHasTextures = true;
+                    break;
+                }
+            }
+
+            if (currentHasTextures && !storedHasTextures) {
+                _originalEmbeddedMaterials = currentMaterials;
+            }
+        }
+
+        // Always use the stored original embedded materials as the baseline
+        std::vector<std::shared_ptr<VROMaterial>> originalMaterials = _originalEmbeddedMaterials;
+
+        VRTMaterialManager *materialManager = [self.bridge moduleForClass:[VRTMaterialManager class]];
+
+        // For each shader override material, extract shader modifiers and uniforms
+        for (NSString *shaderMaterialName in self.shaderOverrides) {
+            std::shared_ptr<VROMaterial> shaderMaterial = [materialManager getMaterialByName:shaderMaterialName];
+            if (!shaderMaterial) {
+                RCTLogError(@"Unknown Shader Material: \"%@\"", shaderMaterialName);
+                continue;
+            }
+
+            // Track cloned materials for this shader override
+            NSMutableArray *clonedMaterialsArray = [[NSMutableArray alloc] init];
+
+            // Clone original materials and merge shader modifiers
+            std::vector<std::shared_ptr<VROMaterial>> mergedMaterials;
+            for (const auto &originalMat : originalMaterials) {
+                // Create a new material copying the original (preserves textures)
+                std::shared_ptr<VROMaterial> mergedMat = std::make_shared<VROMaterial>(originalMat);
+
+                // CRITICAL: Copy properties from shader override material
+                // Similar to Android's dest.copyShaderModifiers(source) approach
+                // We only copy properties that affect rendering, NOT colors/textures
+                // (colors are set dynamically in shader modifiers)
+                mergedMat->setLightingModel(shaderMaterial->getLightingModel());
+                mergedMat->setShininess(shaderMaterial->getShininess());
+                mergedMat->setBlendMode(shaderMaterial->getBlendMode());
+                mergedMat->setTransparencyMode(shaderMaterial->getTransparencyMode());
+                mergedMat->setCullMode(shaderMaterial->getCullMode());
+                mergedMat->setWritesToDepthBuffer(shaderMaterial->getWritesToDepthBuffer());
+                mergedMat->setReadsFromDepthBuffer(shaderMaterial->getReadsFromDepthBuffer());
+
+
+                // NOTE: We DON'T clear existing shader modifiers because:
+                // 1. We always start from a fresh copy of original materials (which have skinning modifiers)
+                // 2. Clearing would remove critical system modifiers like skinning
+                // 3. No accumulation occurs since each shader change starts from stored originals
+                // mergedMat->removeAllShaderModifiers(); // ← REMOVED to preserve skinning modifiers
+
+                // CRITICAL: Disable thread restrictions temporarily (like Android does)
+                // This allows shader modifiers to be copied synchronously during material setup
+                mergedMat->setThreadRestrictionEnabled(false);
+
+                // Copy shader modifiers from shader material to merged material
+                for (const auto &modifier : shaderMaterial->getShaderModifiers()) {
+                    mergedMat->addShaderModifier(modifier);
+                }
+
+                // Copy shader uniforms (floats)
+                for (const auto &uniform : shaderMaterial->getShaderUniformFloats()) {
+                    mergedMat->setShaderUniform(uniform.first, uniform.second);
+                }
+                // Copy shader uniforms (vec3)
+                for (const auto &uniform : shaderMaterial->getShaderUniformVec3s()) {
+                    mergedMat->setShaderUniform(uniform.first, uniform.second);
+                }
+                // Copy shader uniforms (vec4)
+                for (const auto &uniform : shaderMaterial->getShaderUniformVec4s()) {
+                    mergedMat->setShaderUniform(uniform.first, uniform.second);
+                }
+                // Copy shader uniforms (mat4)
+                for (const auto &uniform : shaderMaterial->getShaderUniformMat4s()) {
+                    mergedMat->setShaderUniform(uniform.first, uniform.second);
+                }
+                // Copy shader uniform textures (like Android does)
+                for (const auto &uniform : shaderMaterial->getShaderUniformTextures()) {
+                    mergedMat->setShaderUniform(uniform.first, uniform.second);
+                }
+
+                // Re-enable thread restrictions
+                mergedMat->setThreadRestrictionEnabled(true);
+
+                mergedMaterials.push_back(mergedMat);
+
+                // Store pointer to track for uniform updates
+                [clonedMaterialsArray addObject:[NSValue valueWithPointer:mergedMat.get()]];
+            }
+
+            // Store in map for later uniform updates
+            self.shaderOverrideMap[shaderMaterialName] = clonedMaterialsArray;
+
+            // Apply merged materials to geometry
+            geometry->setMaterials(mergedMaterials);
+        }
+
+        // Force geometry substrate to reset after shader override materials are applied
+        geometry->updateSubstrate();
     }
-    geometry->setMaterials(tempMaterials);
-    [self updateVideoTextures];
+
+    // Recursively apply to child nodes if requested (for 3D models with nested geometries)
+    // This is CRITICAL for GLB/VRX models where geometry is on child nodes
+    if (recursive) {
+        VRTMaterialManager *materialManager = [self.bridge moduleForClass:[VRTMaterialManager class]];
+
+        std::function<void(std::shared_ptr<VRONode>)> applyToChildren = [&](std::shared_ptr<VRONode> node) {
+            for (std::shared_ptr<VRONode> child : node->getChildNodes()) {
+                std::shared_ptr<VROGeometry> childGeometry = child->getGeometry();
+                if (childGeometry) {
+                    // Store original materials for this child node on first call
+                    std::vector<std::shared_ptr<VROMaterial>> childOriginalMaterials;
+                    VRONode* childPtr = child.get();
+
+                    if (_childNodeOriginalMaterials.find(childPtr) == _childNodeOriginalMaterials.end()) {
+                        // First time - save original materials (with skinning modifiers, textures, etc.)
+                        childOriginalMaterials = childGeometry->getMaterials();
+                        if (!childOriginalMaterials.empty()) {
+                            _childNodeOriginalMaterials[childPtr] = childOriginalMaterials;
+                        }
+                    } else {
+                        // Use stored original materials as baseline
+                        childOriginalMaterials = _childNodeOriginalMaterials[childPtr];
+                    }
+
+                    if (!childOriginalMaterials.empty()) {
+                        // Apply shader overrides to child materials
+                        for (NSString *shaderMaterialName in self.shaderOverrides) {
+                            std::shared_ptr<VROMaterial> shaderMaterial = [materialManager getMaterialByName:shaderMaterialName];
+                            if (!shaderMaterial) {
+                                continue;
+                            }
+
+                            // Get or create tracking array for this shader material
+                            NSMutableArray *clonedMaterialsArray = self.shaderOverrideMap[shaderMaterialName];
+                            if (!clonedMaterialsArray) {
+                                clonedMaterialsArray = [[NSMutableArray alloc] init];
+                                self.shaderOverrideMap[shaderMaterialName] = clonedMaterialsArray;
+                            }
+                            // NOTE: Do NOT clear the array here - we need to accumulate materials from ALL child nodes
+                            // The array is cleared once at the start of applyShaderOverridesRecursive (line 852)
+
+                            std::vector<std::shared_ptr<VROMaterial>> mergedChildMaterials;
+
+                            for (const auto &originalMat : childOriginalMaterials) {
+                                std::shared_ptr<VROMaterial> mergedMat = std::make_shared<VROMaterial>(originalMat);
+
+                                // Copy rendering properties from shader override (NOT colors/textures)
+                                mergedMat->setLightingModel(shaderMaterial->getLightingModel());
+                                mergedMat->setShininess(shaderMaterial->getShininess());
+                                mergedMat->setBlendMode(shaderMaterial->getBlendMode());
+                                mergedMat->setTransparencyMode(shaderMaterial->getTransparencyMode());
+                                mergedMat->setCullMode(shaderMaterial->getCullMode());
+                                mergedMat->setWritesToDepthBuffer(shaderMaterial->getWritesToDepthBuffer());
+                                mergedMat->setReadsFromDepthBuffer(shaderMaterial->getReadsFromDepthBuffer());
+
+                                // NOTE: We DON'T clear existing shader modifiers because:
+                                // 1. We always start from a fresh copy of original materials (which have skinning modifiers)
+                                // 2. Clearing would remove critical system modifiers like skinning
+                                // 3. No accumulation occurs since each shader change starts from stored originals
+                                // mergedMat->removeAllShaderModifiers(); // ← REMOVED to preserve skinning modifiers
+
+                                // Disable thread restrictions (like Android)
+                                mergedMat->setThreadRestrictionEnabled(false);
+
+                                // Copy shader modifiers
+                                for (const auto &modifier : shaderMaterial->getShaderModifiers()) {
+                                    mergedMat->addShaderModifier(modifier);
+                                }
+
+                                // Copy all uniforms
+                                for (const auto &uniform : shaderMaterial->getShaderUniformFloats()) {
+                                    mergedMat->setShaderUniform(uniform.first, uniform.second);
+                                }
+                                for (const auto &uniform : shaderMaterial->getShaderUniformVec3s()) {
+                                    mergedMat->setShaderUniform(uniform.first, uniform.second);
+                                }
+                                for (const auto &uniform : shaderMaterial->getShaderUniformVec4s()) {
+                                    mergedMat->setShaderUniform(uniform.first, uniform.second);
+                                }
+                                for (const auto &uniform : shaderMaterial->getShaderUniformMat4s()) {
+                                    mergedMat->setShaderUniform(uniform.first, uniform.second);
+                                }
+                                for (const auto &uniform : shaderMaterial->getShaderUniformTextures()) {
+                                    mergedMat->setShaderUniform(uniform.first, uniform.second);
+                                }
+
+                                // Re-enable thread restrictions
+                                mergedMat->setThreadRestrictionEnabled(true);
+
+                                mergedChildMaterials.push_back(mergedMat);
+
+                                // Track this cloned material for uniform updates
+                                [clonedMaterialsArray addObject:[NSValue valueWithPointer:mergedMat.get()]];
+                            }
+
+                            childGeometry->setMaterials(mergedChildMaterials);
+                            // Force geometry substrate to reset
+                            childGeometry->updateSubstrate();
+                        }
+                    }
+                }
+                // Recurse to grandchildren
+                applyToChildren(child);
+            }
+        };
+
+        applyToChildren(self.node);
+    }
+
+    // Register this node in the global registry if it has shader overrides
+    if (self.shaderOverrideMap.count > 0) {
+        [shaderOverrideNodesRegistry addObject:self];
+    }
+}
+
+- (void)restoreChildNodeMaterials:(std::shared_ptr<VRONode>)node {
+    // Recursively restore original materials for all child nodes
+    for (std::shared_ptr<VRONode> child : node->getChildNodes()) {
+        std::shared_ptr<VROGeometry> childGeometry = child->getGeometry();
+        if (childGeometry) {
+            VRONode* childPtr = child.get();
+            auto it = _childNodeOriginalMaterials.find(childPtr);
+            if (it != _childNodeOriginalMaterials.end()) {
+                childGeometry->setMaterials(it->second);
+                childGeometry->updateSubstrate();
+            }
+        }
+        // Recurse to grandchildren
+        [self restoreChildNodeMaterials:child];
+    }
 }
 
 #pragma mark - Animation
@@ -565,8 +1316,16 @@ const double kTransformDelegateDistanceFilter = 0.01;
 #pragma mark - Events
 
 - (void)setHighAccuracyEvents:(BOOL)enabled{
-    _highAccuracyEvents = enabled;
-    [self node]->setHighAccuracyEvents(enabled);
+    if (!self.node) {
+        return;
+    }
+    
+    @try {
+        _highAccuracyEvents = enabled;
+        [self node]->setHighAccuracyEvents(enabled);
+    } @catch (NSException *exception) {
+        NSLog(@"Error updating highAccuracyEvents property: %@", exception.reason);
+    }
 }
 
 - (void)onHoverViro:(RCTDirectEventBlock)block {
@@ -578,119 +1337,239 @@ const double kTransformDelegateDistanceFilter = 0.01;
 }
 
 - (void)setCanCollide:(BOOL)canCollide {
-    _canCollide = canCollide;
-    
-    if (canCollide && !_physicsDelegate) {
-        _physicsDelegate = std::make_shared<VROPhysicsBodyDelegateiOS>(self);
-    } else if (!canCollide) {
-        _physicsDelegate = nil;
-    }
-    
-    // Update the physic body's delegate if possible
-    std::shared_ptr<VROPhysicsBody> body = [self node]->getPhysicsBody();
-    if (!body) {
+    if (!self.node) {
         return;
     }
     
-    if (canCollide) {
-        body->setPhysicsDelegate(_physicsDelegate);
-    } else {
-        body->setPhysicsDelegate(nullptr);
+    @try {
+        _canCollide = canCollide;
+        
+        if (canCollide && !_physicsDelegate) {
+            _physicsDelegate = std::make_shared<VROPhysicsBodyDelegateiOS>(self);
+        } else if (!canCollide) {
+            _physicsDelegate = nil;
+        }
+        
+        // Update the physic body's delegate if possible
+        std::shared_ptr<VROPhysicsBody> body = [self node]->getPhysicsBody();
+        if (!body) {
+            return;
+        }
+        
+        if (canCollide) {
+            body->setPhysicsDelegate(_physicsDelegate);
+        } else {
+            body->setPhysicsDelegate(nullptr);
+        }
+    } @catch (NSException *exception) {
+        NSLog(@"Error updating canCollide property: %@", exception.reason);
     }
 }
 
 - (void)setCanPinch:(BOOL)canPinch {
-    _canPinch = canPinch;
-    self.eventDelegate->setEnabledEvent(VROEventDelegate::EventAction::OnPinch, canPinch);
+    if (!self.node || !self.eventDelegate) {
+        return;
+    }
+    
+    @try {
+        _canPinch = canPinch;
+        self.eventDelegate->setEnabledEvent(VROEventDelegate::EventAction::OnPinch, canPinch);
+    } @catch (NSException *exception) {
+        NSLog(@"Error updating canPinch property: %@", exception.reason);
+    }
 }
 
 - (void)setCanRotate:(BOOL)canRotate {
-    _canRotate = canRotate;
-    self.eventDelegate->setEnabledEvent(VROEventDelegate::EventAction::OnRotate, canRotate);
+    if (!self.node || !self.eventDelegate) {
+        return;
+    }
+    
+    @try {
+        _canRotate = canRotate;
+        self.eventDelegate->setEnabledEvent(VROEventDelegate::EventAction::OnRotate, canRotate);
+    } @catch (NSException *exception) {
+        NSLog(@"Error updating canRotate property: %@", exception.reason);
+    }
 }
 
 - (void)setCanHover:(BOOL)canHover {
-    _canHover = canHover;
-    self.eventDelegate->setEnabledEvent(VROEventDelegate::EventAction::OnHover, canHover);
+    if (!self.node || !self.eventDelegate) {
+        return;
+    }
+    
+    @try {
+        _canHover = canHover;
+        self.eventDelegate->setEnabledEvent(VROEventDelegate::EventAction::OnHover, canHover);
+    } @catch (NSException *exception) {
+        NSLog(@"Error updating canHover property: %@", exception.reason);
+    }
 }
 
 - (void)setCanClick:(BOOL)canClick {
-    _canClick = canClick;
-    self.eventDelegate->setEnabledEvent(VROEventDelegate::EventAction::OnClick, canClick);
+    if (!self.node || !self.eventDelegate) {
+        return;
+    }
+    
+    @try {
+        _canClick = canClick;
+        self.eventDelegate->setEnabledEvent(VROEventDelegate::EventAction::OnClick, canClick);
+    } @catch (NSException *exception) {
+        NSLog(@"Error updating canClick property: %@", exception.reason);
+    }
 }
 
 - (void)setCanFuse:(BOOL)canFuse {
-    _canFuse = canFuse;
-    self.eventDelegate->setEnabledEvent(VROEventDelegate::EventAction::OnFuse, canFuse);
+    if (!self.node || !self.eventDelegate) {
+        return;
+    }
+    
+    @try {
+        _canFuse = canFuse;
+        self.eventDelegate->setEnabledEvent(VROEventDelegate::EventAction::OnFuse, canFuse);
+    } @catch (NSException *exception) {
+        NSLog(@"Error updating canFuse property: %@", exception.reason);
+    }
 }
 
 - (void)setCanDrag:(BOOL)canDrag {
-    _canDrag = canDrag;
-    self.eventDelegate->setEnabledEvent(VROEventDelegate::EventAction::OnDrag, canDrag);
+    if (!self.node || !self.eventDelegate) {
+        return;
+    }
+    
+    @try {
+        _canDrag = canDrag;
+        self.eventDelegate->setEnabledEvent(VROEventDelegate::EventAction::OnDrag, canDrag);
+    } @catch (NSException *exception) {
+        NSLog(@"Error updating canDrag property: %@", exception.reason);
+    }
 }
 
 - (void)setTimeToFuse:(float)durationMillis {
-    _timeToFuse = durationMillis;
-    self.eventDelegate->setTimeToFuse(durationMillis);
+    if (!self.node || !self.eventDelegate) {
+        return;
+    }
+    
+    @try {
+        _timeToFuse = durationMillis;
+        self.eventDelegate->setTimeToFuse(durationMillis);
+    } @catch (NSException *exception) {
+        NSLog(@"Error updating timeToFuse property: %@", exception.reason);
+    }
 }
 
 - (void)setDragType:(NSString *)dragType {
-    if ([dragType caseInsensitiveCompare:@"FixedDistance"] == NSOrderedSame) {
-        _node->setDragType(VRODragType::FixedDistance);
-    } else if ([dragType caseInsensitiveCompare:@"FixedToWorld"] == NSOrderedSame) {
-        _node->setDragType(VRODragType::FixedToWorld);
-    } else if ([dragType caseInsensitiveCompare:@"FixedToPlane"] == NSOrderedSame) {
-        _node->setDragType(VRODragType::FixedToPlane);
-    } else {
-        RCTLogError(@"Received unknown drag type: %@", dragType);
+    if (!self.node) {
+        return;
+    }
+    
+    @try {
+        if ([dragType caseInsensitiveCompare:@"FixedDistance"] == NSOrderedSame) {
+            _node->setDragType(VRODragType::FixedDistance);
+        } else if ([dragType caseInsensitiveCompare:@"FixedToWorld"] == NSOrderedSame) {
+            _node->setDragType(VRODragType::FixedToWorld);
+        } else if ([dragType caseInsensitiveCompare:@"FixedToPlane"] == NSOrderedSame) {
+            _node->setDragType(VRODragType::FixedToPlane);
+        } else {
+            RCTLogError(@"Received unknown drag type: %@", dragType);
+        }
+    } @catch (NSException *exception) {
+        NSLog(@"Error updating dragType property: %@", exception.reason);
     }
 }
 
 - (void)setDragPlane:(NSDictionary *)dict {
-    NSArray *planePoint = [dict objectForKey:@"planePoint"];
-    NSArray *planeNormal = [dict objectForKey:@"planeNormal"];
-    if (planePoint && planeNormal) {
-        [self node]->setDragPlanePoint({[[planePoint objectAtIndex:0] floatValue],
-                                        [[planePoint objectAtIndex:1] floatValue],
-                                        [[planePoint objectAtIndex:2] floatValue]});
-
-        [self node]->setDragPlaneNormal({[[planeNormal objectAtIndex:0] floatValue],
-                                         [[planeNormal objectAtIndex:1] floatValue],
-                                         [[planeNormal objectAtIndex:2] floatValue]});
+    if (!self.node) {
+        return;
     }
+    
+    @try {
+        NSArray *planePoint = [dict objectForKey:@"planePoint"];
+        NSArray *planeNormal = [dict objectForKey:@"planeNormal"];
+        if (planePoint && planeNormal) {
+            [self node]->setDragPlanePoint({[[planePoint objectAtIndex:0] floatValue],
+                                            [[planePoint objectAtIndex:1] floatValue],
+                                            [[planePoint objectAtIndex:2] floatValue]});
 
-    NSNumber *maxDistance = [dict objectForKey:@"maxDistance"];
-    if (maxDistance) {
-        [self node]->setDragMaxDistance([maxDistance floatValue]);
+            [self node]->setDragPlaneNormal({[[planeNormal objectAtIndex:0] floatValue],
+                                             [[planeNormal objectAtIndex:1] floatValue],
+                                             [[planeNormal objectAtIndex:2] floatValue]});
+        }
+
+        NSNumber *maxDistance = [dict objectForKey:@"maxDistance"];
+        if (maxDistance) {
+            [self node]->setDragMaxDistance([maxDistance floatValue]);
+        }
+    } @catch (NSException *exception) {
+        NSLog(@"Error updating dragPlane property: %@", exception.reason);
     }
 }
 
 - (void)setIgnoreEventHandling:(BOOL)ignoreEventHandling {
-    _ignoreEventHandling = ignoreEventHandling;
-    [self resolveIgnoreEventHandling];
+    if (!self.node) {
+        return;
+    }
+    
+    @try {
+        _ignoreEventHandling = ignoreEventHandling;
+        [self resolveIgnoreEventHandling];
+    } @catch (NSException *exception) {
+        NSLog(@"Error updating ignoreEventHandling property: %@", exception.reason);
+    }
 }
 
 - (void)setShouldIgnoreEventHandling:(BOOL)ignoreEventHandling {
-    _shouldIgnoreEventHandling = ignoreEventHandling;
-    [self resolveIgnoreEventHandling];
+    if (!self.node) {
+        return;
+    }
+    
+    @try {
+        _shouldIgnoreEventHandling = ignoreEventHandling;
+        [self resolveIgnoreEventHandling];
+    } @catch (NSException *exception) {
+        NSLog(@"Error updating shouldIgnoreEventHandling property: %@", exception.reason);
+    }
 }
 
 - (void)resolveIgnoreEventHandling {
-    BOOL resolvedIgnoreEventHandling = _ignoreEventHandling || _shouldIgnoreEventHandling;
-    [self node]->setIgnoreEventHandling(resolvedIgnoreEventHandling);
-    for (VRTNode *child : [self reactSubviews]) {
-        child.shouldIgnoreEventHandling = resolvedIgnoreEventHandling;
+    if (!self.node) {
+        return;
+    }
+    
+    @try {
+        BOOL resolvedIgnoreEventHandling = _ignoreEventHandling || _shouldIgnoreEventHandling;
+        [self node]->setIgnoreEventHandling(resolvedIgnoreEventHandling);
+        for (VRTNode *child : [self reactSubviews]) {
+            child.shouldIgnoreEventHandling = resolvedIgnoreEventHandling;
+        }
+    } @catch (NSException *exception) {
+        NSLog(@"Error in resolveIgnoreEventHandling: %@", exception.reason);
     }
 }
 
 - (void)setLightReceivingBitMask:(int)lightReceivingBitMask {
-    _lightReceivingBitMask = lightReceivingBitMask;
-    _node->setLightReceivingBitMask(lightReceivingBitMask);
+    if (!self.node) {
+        return;
+    }
+    
+    @try {
+        _lightReceivingBitMask = lightReceivingBitMask;
+        _node->setLightReceivingBitMask(lightReceivingBitMask);
+    } @catch (NSException *exception) {
+        NSLog(@"Error updating lightReceivingBitMask property: %@", exception.reason);
+    }
 }
 
 - (void)setShadowCastingBitMask:(int)shadowCastingBitMask {
-    _shadowCastingBitMask = shadowCastingBitMask;
-    _node->setShadowCastingBitMask(shadowCastingBitMask);
+    if (!self.node) {
+        return;
+    }
+    
+    @try {
+        _shadowCastingBitMask = shadowCastingBitMask;
+        _node->setShadowCastingBitMask(shadowCastingBitMask);
+    } @catch (NSException *exception) {
+        NSLog(@"Error updating shadowCastingBitMask property: %@", exception.reason);
+    }
 }
 
 -(void)onHover:(int)source node:(std::shared_ptr<VRONode>)node
@@ -1113,17 +1992,49 @@ const double kTransformDelegateDistanceFilter = 0.01;
 
 - (void)onCollided:(std::string) bodyKey
          collision:(VROPhysicsBody::VROCollision)collision {
-    
+
     NSMutableArray *coordinate = [NSMutableArray array];
-    [coordinate insertObject:[NSNumber numberWithFloat:collision.collidedPoint.x] atIndex:0];
-    [coordinate insertObject:[NSNumber numberWithFloat:collision.collidedPoint.y] atIndex:1];
-    [coordinate insertObject:[NSNumber numberWithFloat:collision.collidedPoint.z] atIndex:2];
-    
+    [coordinate addObject:[NSNumber numberWithFloat:collision.collidedPoint.x]];
+    [coordinate addObject:[NSNumber numberWithFloat:collision.collidedPoint.y]];
+    [coordinate addObject:[NSNumber numberWithFloat:collision.collidedPoint.z]];
+
     NSMutableArray *normal = [NSMutableArray array];
-    [normal insertObject:[NSNumber numberWithFloat:collision.collidedNormal.x] atIndex:0];
-    [normal insertObject:[NSNumber numberWithFloat:collision.collidedNormal.y] atIndex:1];
-    [normal insertObject:[NSNumber numberWithFloat:collision.collidedNormal.z] atIndex:2];
-    
+    [normal addObject:[NSNumber numberWithFloat:collision.collidedNormal.x]];
+    [normal addObject:[NSNumber numberWithFloat:collision.collidedNormal.y]];
+    [normal addObject:[NSNumber numberWithFloat:collision.collidedNormal.z]];
+
     self.onCollisionViro(@{@"viroTag": @(collision.collidedBodyTag.c_str()), @"collidedPoint":coordinate, @"collidedNormal":normal});
 }
+
+#pragma mark - Memory Management
+
+- (void)dealloc {
+    // Clear all delegates to prevent retain cycles
+    if (_node) {
+        _node->setEventDelegate(nullptr);
+        _node->setTransformDelegate(nullptr);
+
+        // Clear physics delegate from physics body if it exists
+        std::shared_ptr<VROPhysicsBody> body = _node->getPhysicsBody();
+        if (body) {
+            body->setPhysicsDelegate(nullptr);
+        }
+    }
+
+    // Clear C++ shared_ptr delegates
+    _eventDelegate = nullptr;
+    _transformDelegate = nullptr;
+    _physicsDelegate = nullptr;
+
+    // Clear node reference
+    _node = nullptr;
+
+    // Clear animation references
+    _nodeAnimation = nil;
+
+    // Unregister from shader registries
+    [shaderOverrideNodesRegistry removeObject:self];
+    [shaderMaterialsNodesRegistry removeObject:self];
+}
+
 @end
