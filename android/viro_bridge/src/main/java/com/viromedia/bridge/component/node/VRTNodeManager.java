@@ -24,7 +24,6 @@ package com.viromedia.bridge.component.node;
 import android.provider.MediaStore;
 
 import com.facebook.react.bridge.Dynamic;
-import com.facebook.react.bridge.DynamicFromMap;
 import com.facebook.react.bridge.JavaOnlyMap;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReadableArray;
@@ -35,12 +34,15 @@ import com.facebook.react.uimanager.ViewProps;
 import com.facebook.react.common.MapBuilder;
 import com.facebook.react.uimanager.annotations.ReactProp;
 import com.facebook.react.uimanager.annotations.ReactPropGroup;
+import com.facebook.react.uimanager.ReactStylesDiffMap;
 import com.facebook.yoga.YogaConstants;
 import com.viro.core.Material;
 import com.viro.core.VideoTexture;
+import com.viromedia.bridge.component.VRTComponent;
 import com.viromedia.bridge.component.VRTViroViewGroupManager;
 import com.viromedia.bridge.module.MaterialManager;
 import com.viromedia.bridge.module.MaterialManager.MaterialWrapper;
+import com.viromedia.bridge.utility.DynamicUtil;
 import com.viromedia.bridge.utility.Helper;
 import com.viromedia.bridge.utility.ViroEvents;
 import com.viromedia.bridge.utility.ViroLog;
@@ -56,6 +58,8 @@ import javax.annotation.Nullable;
  */
 public abstract class VRTNodeManager<T extends VRTNode> extends VRTViroViewGroupManager<T> {
 
+    private static String TAG = VRTNodeManager.class.getSimpleName();
+
     public static final float s2DUnitPer3DUnit = 1000;
     private static final String WIDTH_NAME = "width";
     private static final String HEIGHT_NAME = "height";
@@ -66,158 +70,225 @@ public abstract class VRTNodeManager<T extends VRTNode> extends VRTViroViewGroup
         super(context);
     }
 
+    @Override
+    public void updateProperties(T viewToUpdate, ReactStylesDiffMap props) {
+        super.updateProperties(viewToUpdate, props);
+        // Force immediate commit of props for React Native 0.79+ compatibility
+        if (viewToUpdate != null && !viewToUpdate.isTornDown()) {
+            viewToUpdate.post(() -> {
+                viewToUpdate.requestLayout();
+                viewToUpdate.invalidate();
+            });
+        }
+    }
+
+    /**
+     * Safely apply a prop update with Fabric-aware error handling.
+     * This method provides automatic retry on transient failures (e.g., GL context not ready)
+     * and consistent error logging across all props.
+     *
+     * @param view The view to update
+     * @param propName The name of the property (for logging)
+     * @param setter The lambda that applies the property
+     */
+    protected void safelyApplyProp(T view, String propName, PropSetter<T> setter) {
+        if (view == null || view.isTornDown()) {
+            return;
+        }
+
+        try {
+            setter.apply(view);
+        } catch (IllegalStateException e) {
+            // View state not ready (e.g., GL context initializing) - retry on next frame
+            ViroLog.warn(TAG, "Deferring " + propName + " update - view not ready: " + e.getMessage());
+            view.post(() -> {
+                if (!view.isTornDown()) {
+                    try {
+                        setter.apply(view);
+                    } catch (Exception retryError) {
+                        ViroLog.error(TAG, "Failed to apply " + propName + " after retry: " + retryError.getMessage());
+                    }
+                }
+            });
+        } catch (Exception e) {
+            ViroLog.error(TAG, "Error applying " + propName + ": " + e.getMessage());
+        }
+    }
+
+    /**
+     * Functional interface for applying a prop to a view.
+     * Allows passing prop application logic as a lambda to safelyApplyProp().
+     */
+    @FunctionalInterface
+    protected interface PropSetter<T> {
+        void apply(T view) throws Exception;
+    }
+
     @ReactProp(name = "position")
     public void setPosition(T view, ReadableArray position) {
-        view.setPosition(Helper.toFloatArray(position, DEFAULT_ZERO_VEC));
+        safelyApplyProp(view, "position", v ->
+            v.setPosition(Helper.toFloatArray(position, DEFAULT_ZERO_VEC))
+        );
     }
 
     @ReactProp(name = "rotation")
-    public void setRotation(VRTNode view, ReadableArray rotation) {
-        view.setRotation(Helper.toFloatArray(rotation, DEFAULT_ZERO_VEC));
+    public void setRotation(T view, ReadableArray rotation) {
+        safelyApplyProp(view, "rotation", v ->
+            v.setRotation(Helper.toFloatArray(rotation, DEFAULT_ZERO_VEC))
+        );
     }
 
     @ReactProp(name = "scale")
-    public void setScale(VRTNode view, ReadableArray scale) {
-        view.setScale(Helper.toFloatArray(scale, new float[]{1,1,1}));
+    public void setScale(T view, ReadableArray scale) {
+        safelyApplyProp(view, "scale", v ->
+            v.setScale(Helper.toFloatArray(scale, new float[]{1,1,1}))
+        );
     }
 
     @ReactProp(name = "rotationPivot")
-    public void setRotationPivot(VRTNode view, ReadableArray scale) {
-        view.setRotationPivot(Helper.toFloatArray(scale, DEFAULT_ZERO_VEC));
+    public void setRotationPivot(T view, ReadableArray scale) {
+        safelyApplyProp(view, "rotationPivot", v ->
+            v.setRotationPivot(Helper.toFloatArray(scale, DEFAULT_ZERO_VEC))
+        );
     }
 
     @ReactProp(name = "scalePivot")
-    public void setScalePivot(VRTNode view, ReadableArray scale) {
-        view.setScalePivot(Helper.toFloatArray(scale, DEFAULT_ZERO_VEC));
+    public void setScalePivot(T view, ReadableArray scale) {
+        safelyApplyProp(view, "scalePivot", v ->
+            v.setScalePivot(Helper.toFloatArray(scale, DEFAULT_ZERO_VEC))
+        );
     }
 
     @ReactProp(name = "opacity", defaultFloat = 1f)
-    public void setOpacity(VRTNode view, float opacity) {
-        view.setOpacity(opacity);
+    public void setOpacity(T view, float opacity) {
+        safelyApplyProp(view, "opacity", v -> v.setOpacity(opacity));
     }
 
     @ReactProp(name = "visible", defaultBoolean = true)
-    public void setVisible(VRTNode view, boolean visibility) {
-        view.setVisible(visibility);
+    public void setVisible(T view, boolean visibility) {
+        safelyApplyProp(view, "visible", v -> v.setVisible(visibility));
     }
 
     @ReactProp(name = "renderingOrder", defaultInt = 0)
-    public void setRenderingOrder(VRTNode view, int renderingOrder) {
-        view.setRenderingOrder(renderingOrder);
+    public void setRenderingOrder(T view, int renderingOrder) {
+        safelyApplyProp(view, "renderingOrder", v -> v.setRenderingOrder(renderingOrder));
     }
 
     @ReactProp(name = "canHover", defaultBoolean = VRTNode.DEFAULT_CAN_HOVER)
-    public void setCanHover(VRTNode view, boolean canHover) {
-        view.setCanHover(canHover);
+    public void setCanHover(T view, boolean canHover) {
+        safelyApplyProp(view, "canHover", v -> v.setCanHover(canHover));
     }
 
     @ReactProp(name = "canClick", defaultBoolean = VRTNode.DEFAULT_CAN_CLICK)
-    public void setCanClick(VRTNode view, boolean canClick) {
-        view.setCanClick(canClick);
+    public void setCanClick(T view, boolean canClick) {
+        safelyApplyProp(view, "canClick", v -> v.setCanClick(canClick));
     }
 
     @ReactProp(name = "canTouch", defaultBoolean = VRTNode.DEFAULT_CAN_TOUCH)
-    public void setCanTouch(VRTNode view, boolean canTouch) {
-        view.setCanTouch(canTouch);
+    public void setCanTouch(T view, boolean canTouch) {
+        safelyApplyProp(view, "canTouch", v -> v.setCanTouch(canTouch));
     }
 
     @ReactProp(name = "canScroll", defaultBoolean = VRTNode.DEFAULT_CAN_SCROLL)
-    public void setCanScroll(VRTNode view, boolean canScroll) {
-        view.setCanScroll(canScroll);
+    public void setCanScroll(T view, boolean canScroll) {
+        safelyApplyProp(view, "canScroll", v -> v.setCanScroll(canScroll));
     }
 
     @ReactProp(name = "canSwipe", defaultBoolean = VRTNode.DEFAULT_CAN_SWIPE)
-    public void setCanSwipe(VRTNode view, boolean canSwipe) {
-        view.setCanSwipe(canSwipe);
+    public void setCanSwipe(T view, boolean canSwipe) {
+        safelyApplyProp(view, "canSwipe", v -> v.setCanSwipe(canSwipe));
     }
 
     @ReactProp(name = "canDrag", defaultBoolean = VRTNode.DEFAULT_CAN_DRAG)
-    public void setCanDrag(VRTNode view, boolean canDrag) {
-        view.setCanDrag(canDrag);
+    public void setCanDrag(T view, boolean canDrag) {
+        safelyApplyProp(view, "canDrag", v -> v.setCanDrag(canDrag));
     }
 
     @ReactProp(name = "canFuse", defaultBoolean = VRTNode.DEFAULT_CAN_FUSE)
-    public void setCanFuse(VRTNode view, boolean canFuse) {
-        view.setCanFuse(canFuse);
+    public void setCanFuse(T view, boolean canFuse) {
+        safelyApplyProp(view, "canFuse", v -> v.setCanFuse(canFuse));
     }
 
     @ReactProp(name = "canPinch", defaultBoolean = VRTNode.DEFAULT_CAN_PINCH)
-    public void setCanPinch(VRTNode view, boolean canPinch) {
-        view.setCanPinch(canPinch);
+    public void setCanPinch(T view, boolean canPinch) {
+        safelyApplyProp(view, "canPinch", v -> v.setCanPinch(canPinch));
     }
 
     @ReactProp(name = "canRotate", defaultBoolean = VRTNode.DEFAULT_CAN_ROTATE)
-    public void setCanRotate(VRTNode view, boolean canRotate) {
-        view.setCanRotate(canRotate);
+    public void setCanRotate(T view, boolean canRotate) {
+        safelyApplyProp(view, "canRotate", v -> v.setCanRotate(canRotate));
     }
 
     @ReactProp(name = "timeToFuse", defaultFloat = VRTNode.DEFAULT_TIME_TO_FUSE_MILLIS)
-    public void setTimeToFuse(VRTNode view, float durationMillis) {
-        view.setTimeToFuse(durationMillis);
+    public void setTimeToFuse(T view, float durationMillis) {
+        safelyApplyProp(view, "timeToFuse", v -> v.setTimeToFuse(durationMillis));
     }
 
     @ReactProp(name = "dragType")
-    public void setDragType(VRTNode view, String dragType) {
-        view.setDragType(dragType);
+    public void setDragType(T view, String dragType) {
+        safelyApplyProp(view, "dragType", v -> v.setDragType(dragType));
     }
 
     @ReactProp(name = "dragPlane")
-    public void setDragPlane(VRTNode view, ReadableMap dragPlane) {
-        view.setDragPlane(dragPlane);
+    public void setDragPlane(T view, ReadableMap dragPlane) {
+        safelyApplyProp(view, "dragPlane", v -> v.setDragPlane(dragPlane));
     }
 
     @ReactProp(name = "animation")
-    public void setAnimation(VRTNode view, @androidx.annotation.Nullable ReadableMap map) {
-        view.setAnimation(map);
+    public void setAnimation(T view, @androidx.annotation.Nullable ReadableMap map) {
+        safelyApplyProp(view, "animation", v -> v.setAnimation(map));
     }
 
     @ReactProp(name = "ignoreEventHandling", defaultBoolean = VRTNode.DEFAULT_IGNORE_EVENT_HANDLING)
-    public void setIgnoreEventHandling(VRTNode view, boolean ignore) {
-        view.setIgnoreEventHandling(ignore);
+    public void setIgnoreEventHandling(T view, boolean ignore) {
+        safelyApplyProp(view, "ignoreEventHandling", v -> v.setIgnoreEventHandling(ignore));
     }
 
     @ReactProp(name = "materials")
-    public void setMaterials(VRTNode view, @Nullable ReadableArray materials) {
-        // get material manager
-        MaterialManager materialManager = getContext().getNativeModule(MaterialManager.class);
+    public void setMaterials(T view, @Nullable ReadableArray materials) {
+        safelyApplyProp(view, "materials", v -> {
+            // get material manager
+            MaterialManager materialManager = getContext().getNativeModule(MaterialManager.class);
 
-        ArrayList<Material> nativeMaterials = new ArrayList<>();
-        if (materials != null) {
-            for (int i = 0; i < materials.size(); i++) {
-                Material nativeMaterial = materialManager.getMaterial(materials.getString(i));
-                if (materialManager.isVideoMaterial(materials.getString(i))) {
-                    if (!(nativeMaterial.getDiffuseTexture() instanceof VideoTexture)) {
-                        // Recreate the material with the proper context.
-                        if (view.getViroContext() != null) {
-                            MaterialWrapper materialWrapper = materialManager.getMaterialWrapper(materials.getString(i));
-                            VideoTexture videoTexture = new VideoTexture(view.getViroContext(), materialWrapper.getVideoTextureURI());
-                            materialWrapper.recreate(videoTexture);
-                            nativeMaterial = materialWrapper.getNativeMaterial();
+            ArrayList<Material> nativeMaterials = new ArrayList<>();
+            if (materials != null) {
+                for (int i = 0; i < materials.size(); i++) {
+                    Material nativeMaterial = materialManager.getMaterial(materials.getString(i));
+                    if (materialManager.isVideoMaterial(materials.getString(i))) {
+                        if (!(nativeMaterial.getDiffuseTexture() instanceof VideoTexture)) {
+                            // Recreate the material with the proper context.
+                            if (v.getViroContext() != null) {
+                                MaterialWrapper materialWrapper = materialManager.getMaterialWrapper(materials.getString(i));
+                                VideoTexture videoTexture = new VideoTexture(v.getViroContext(), materialWrapper.getVideoTextureURI());
+                                materialWrapper.recreate(videoTexture);
+                                nativeMaterial = materialWrapper.getNativeMaterial();
+                            }
                         }
                     }
-                }
 
-                if (nativeMaterial == null) {
-                    throw new IllegalArgumentException("Material [" + materials.getString(i) + "] not found. Did you create it?");
-                }
+                    if (nativeMaterial == null) {
+                        throw new IllegalArgumentException("Material [" + materials.getString(i) + "] not found. Did you create it?");
+                    }
 
-                nativeMaterials.add(nativeMaterial);
+                    nativeMaterials.add(nativeMaterial);
+                }
             }
-        }
-        view.setMaterials(nativeMaterials);
+            v.setMaterials(nativeMaterials);
+        });
     }
 
     @ReactProp(name = "transformBehaviors")
-    public void setTransformBehaviors(VRTNode view, @Nullable ReadableArray transformBehaviors) {
-
-        String[] behaviors = new String[0];
-        if (transformBehaviors != null) {
-            behaviors = new String[transformBehaviors.size()];
-            for (int i = 0; i < transformBehaviors.size(); i++) {
-                behaviors[i] = transformBehaviors.getString(i);
+    public void setTransformBehaviors(T view, @Nullable ReadableArray transformBehaviors) {
+        safelyApplyProp(view, "transformBehaviors", v -> {
+            String[] behaviors = new String[0];
+            if (transformBehaviors != null) {
+                behaviors = new String[transformBehaviors.size()];
+                for (int i = 0; i < transformBehaviors.size(); i++) {
+                    behaviors[i] = transformBehaviors.getString(i);
+                }
             }
-        }
-        view.setTransformBehaviors(behaviors);
+            v.setTransformBehaviors(behaviors);
+        });
     }
 
     @Override
@@ -244,7 +315,7 @@ public abstract class VRTNodeManager<T extends VRTNode> extends VRTViroViewGroup
                 super.setWidth(width);
             } else if (width.getType() == ReadableType.Number){
                 JavaOnlyMap map = JavaOnlyMap.of(WIDTH_NAME, width.asDouble() * s2DUnitPer3DUnit);
-                Dynamic newWidth = DynamicFromMap.create(map, WIDTH_NAME);
+                Dynamic newWidth = DynamicUtil.create(map, WIDTH_NAME);
                 super.setWidth(newWidth);
             } else {
                 ViroLog.warn(TAG, "Width is not of type Number or String. Doing nothing.");
@@ -257,7 +328,7 @@ public abstract class VRTNodeManager<T extends VRTNode> extends VRTViroViewGroup
                 super.setHeight(height);
             } else if (height.getType() == ReadableType.Number) {
                 JavaOnlyMap map = JavaOnlyMap.of(HEIGHT_NAME, height.asDouble() * s2DUnitPer3DUnit);
-                Dynamic newHeight = DynamicFromMap.create(map, HEIGHT_NAME);
+                Dynamic newHeight = DynamicUtil.create(map, HEIGHT_NAME);
                 super.setHeight(newHeight);
             } else {
                 ViroLog.warn(TAG, "Height is not of type Number or String. Doing nothing.");
@@ -272,13 +343,13 @@ public abstract class VRTNodeManager<T extends VRTNode> extends VRTViroViewGroup
                 ViewProps.PADDING_RIGHT,
                 ViewProps.PADDING_TOP,
                 ViewProps.PADDING_BOTTOM,
-        }, defaultFloat = YogaConstants.UNDEFINED)
+        }, defaultFloat = Float.NaN)
         public void setPaddings(int index, Dynamic padding) {
             if (padding.getType() == ReadableType.String) {
                 super.setPaddings(index, padding);
             } else if (padding.getType() == ReadableType.Number) {
                 JavaOnlyMap map = JavaOnlyMap.of(PADDING_NAME, padding.asDouble() * s2DUnitPer3DUnit);
-                Dynamic newPadding = DynamicFromMap.create(map, PADDING_NAME);
+                Dynamic newPadding = DynamicUtil.create(map, PADDING_NAME);
                 super.setPaddings(index, newPadding);
             } else {
                 ViroLog.warn(TAG, "Padding is not of type Number of String. Doing nothing.");
@@ -291,7 +362,7 @@ public abstract class VRTNodeManager<T extends VRTNode> extends VRTViroViewGroup
                 ViewProps.BORDER_RIGHT_WIDTH,
                 ViewProps.BORDER_TOP_WIDTH,
                 ViewProps.BORDER_BOTTOM_WIDTH,
-        }, defaultFloat = YogaConstants.UNDEFINED)
+        }, defaultFloat = Float.NaN)
         public void setBorderWidths(int index, float borderWidth) {
             super.setBorderWidths(index, borderWidth * s2DUnitPer3DUnit);
         }
@@ -323,23 +394,23 @@ public abstract class VRTNodeManager<T extends VRTNode> extends VRTViroViewGroup
     }
 
     @ReactProp(name = "physicsBody")
-    public void setPhysicsBody(VRTNode view, ReadableMap map) {
-        view.setPhysicsBody(map);
+    public void setPhysicsBody(T view, ReadableMap map) {
+        safelyApplyProp(view, "physicsBody", v -> v.setPhysicsBody(map));
     }
 
     @ReactProp(name = "canCollide", defaultBoolean = VRTNode.DEFAULT_CAN_FUSE)
-    public void setCanCollide(VRTNode view, boolean canCollide) {
-        view.setCanCollide(canCollide);
+    public void setCanCollide(T view, boolean canCollide) {
+        safelyApplyProp(view, "canCollide", v -> v.setCanCollide(canCollide));
     }
 
     @ReactProp(name = "viroTag")
-    public void setViroTag(VRTNode view, String tag) {
-        view.setViroTag(tag);
+    public void setViroTag(T view, String tag) {
+        safelyApplyProp(view, "viroTag", v -> v.setViroTag(tag));
     }
 
     @ReactProp(name = "hasTransformDelegate", defaultBoolean = false)
-    public void setViroTag(VRTNode view, boolean hasDelegate) {
-        view.setOnNativeTransformDelegate(hasDelegate);
+    public void setHasTransformDelegate(T view, boolean hasDelegate) {
+        safelyApplyProp(view, "hasTransformDelegate", v -> v.setOnNativeTransformDelegate(hasDelegate));
     }
 
 }
